@@ -6,7 +6,7 @@ namespace MsImeDict.App;
 /// 全局热键注册。用消息专用窗口（HWND_MESSAGE）接收 WM_HOTKEY，
 /// 不占屏也不出现在任务栏。
 /// </summary>
-public sealed class HotkeyHost : NativeWindow, IDisposable
+public sealed class HotkeyHost : NativeWindow
 {
     private const int WM_HOTKEY = 0x0312;
     private const uint MOD_ALT = 0x0001;
@@ -50,10 +50,11 @@ public sealed class HotkeyHost : NativeWindow, IDisposable
         base.WndProc(ref m);
     }
 
-    protected override void Dispose(bool disposing)
+    /// <summary>释放：注销热键并销毁消息窗口。</summary>
+    public void Shutdown()
     {
         Unregister();
-        base.Dispose(disposing);
+        if (Handle != IntPtr.Zero) DestroyHandle();
     }
 
     [DllImport("user32.dll", SetLastError = true)]

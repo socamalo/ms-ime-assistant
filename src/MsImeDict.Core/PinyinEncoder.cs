@@ -34,14 +34,33 @@ public sealed class PinyinEncoder
             return new Encoded { Notes = notes };
         }
 
-        // 每个字的所有读音
+        // 每个字的所有读音。取不到读音的字整字丢弃，保证 parts 与 readingsPerPart 下标对齐
+        var usableParts = new List<(string Text, bool IsChinese)>();
         var readingsPerPart = new List<string[]>();
         foreach (var part in parts)
         {
+            string[] readings;
             if (part.IsChinese)
-                readingsPerPart.Add(PinyinTable.Readings(part.Ch));
+            {
+                readings = PinyinTable.Readings(part.Ch);
+                if (readings.Length == 0)
+                {
+                    notes.Add($"字「{part.Ch}」没有读音数据，已跳过");
+                    continue;
+                }
+            }
             else
-                readingsPerPart.Add(new[] { part.Text });
+            {
+                readings = new[] { part.Text };
+            }
+            usableParts.Add(part);
+            readingsPerPart.Add(readings);
+        }
+
+        if (readingsPerPart.Count == 0)
+        {
+            notes.Add("没有可编码的字");
+            return new Encoded { Notes = notes };
         }
 
         var combos = ExpandCombinations(readingsPerPart);
@@ -52,7 +71,7 @@ public sealed class PinyinEncoder
         {
             var f = string.Concat(combo);
             var a = string.Concat(combo.Select((s, i) =>
-                parts[i].IsChinese ? s[..1] : parts[i].Text[..1]));
+                usableParts[i].IsChinese ? s[..1] : usableParts[i].Text[..1]));
             if (!full.Contains(f)) full.Add(f);
             if (!abbr.Contains(a)) abbr.Add(a);
         }

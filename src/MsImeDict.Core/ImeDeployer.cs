@@ -42,11 +42,6 @@ public sealed class ImeDeployer
         var store = fromStore.ToList();
         var storeCodes = store.Select(e => e.Code).ToHashSet(StringComparer.Ordinal);
 
-        var merged = new List<PhraseEntry>();
-        // 保留输入法里已有、但母库没有的条目
-        foreach (var e in existing) if (!storeCodes.Contains(e.Code)) merged.Add(e);
-        merged.AddRange(store);
-
         // 同一编码只能有一条：母库优先，其次保留原有的
         var byCode = new Dictionary<string, PhraseEntry>(StringComparer.Ordinal);
         foreach (var e in existing) byCode[e.Code] = e;
@@ -153,7 +148,8 @@ public sealed class ImeDeployer
         try
         {
             var data = File.ReadAllBytes(LexPath);
-            var problems = Mschxudp.Validate(data);
+            // 读现有文件用于合并时不检查排序：输入法自己的文件不保证有序，写出前会重排
+            var problems = Mschxudp.Validate(data, checkOrdering: false);
             if (problems.Count > 0)
             {
                 result.Ok = false;

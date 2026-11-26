@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MsImeDict.Core;
 
 namespace MsImeDict.App;
@@ -178,7 +179,7 @@ public sealed class TrayHost
 
     private void Shutdown()
     {
-        _hotkey.Unregister();
+        _hotkey.Shutdown();
         _tray.Visible = false;
         _tray.Dispose();
         _store?.Dispose();

@@ -131,10 +131,10 @@ public static class Mschxudp
         if (offsetStart + 4 * count != phraseStart)
             throw new FormatException(
                 $"偏移表长度与记录区起点不符：0x{offsetStart:X} + 4×{count} != 0x{phraseStart:X}");
-        if (phraseEnd != (uint)data.Length)
-            throw new FormatException($"文件总长字段 {phraseEnd} 与实际长度 {data.Length} 不符");
-        if (phraseStart + (phraseEnd - phraseStart) > (uint)data.Length)
-            throw new FormatException("记录区越界");
+        if (phraseEnd > (uint)data.Length)
+            throw new FormatException($"记录区终点 {phraseEnd} 超出文件长度 {data.Length}");
+        if (phraseEnd < phraseStart)
+            throw new FormatException($"记录区终点 {phraseEnd} 小于起点 {phraseStart}");
 
         var result = new List<PhraseEntry>((int)count);
         for (uint i = 0; i < count; i++)
@@ -176,8 +176,12 @@ public static class Mschxudp
         return result;
     }
 
-    /// <summary>结构体检：解析 + 逐条校验 + 排序检查。返回问题列表，空列表表示健康。</summary>
-    public static List<string> Validate(byte[] data)
+    /// <summary>
+    /// 结构体检：解析 + 逐条校验 + 排序检查。
+    /// checkOrdering 只对「准备写出的文件」生效；读现有文件用于合并时应关掉，
+    /// 因为输入法自己的文件不保证有序，而我们写出前一定会重排。
+    /// </summary>
+    public static List<string> Validate(byte[] data, bool checkOrdering = true)
     {
         var problems = new List<string>();
         List<PhraseEntry> entries;
@@ -195,9 +199,10 @@ public static class Mschxudp
                     problems.Add($"[{i}] 编码含非法字符 '{ch}'");
         }
 
-        for (int i = 1; i < entries.Count; i++)
-            if (string.CompareOrdinal(entries[i - 1].Code, entries[i].Code) > 0)
-                problems.Add($"记录未按编码升序：[{i - 1}] '{entries[i - 1].Code}' > [{i}] '{entries[i].Code}'");
+        if (checkOrdering)
+            for (int i = 1; i < entries.Count; i++)
+                if (string.CompareOrdinal(entries[i - 1].Code, entries[i].Code) > 0)
+                    problems.Add($"记录未按编码升序：[{i - 1}] '{entries[i - 1].Code}' > [{i}] '{entries[i].Code}'");
 
         var dup = entries.GroupBy(e => e.Code, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
         if (dup is not null) problems.Add($"编码重复：'{dup.Key}'");
