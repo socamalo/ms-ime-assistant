@@ -5,10 +5,8 @@ namespace MsImeDict.App;
 /// <summary>
 /// 在专用 STA 线程上执行取词。
 ///
-/// 原因：剪贴板回退路径用到 System.Windows.Forms.Clipboard，它要求 STA；
-/// 而鼠标钩子回调跑在线程池（MTA）线程上，直接调用会失败并静默返回空，
-/// 表现为「Electron 应用里选词没有浮条」。
-/// UI Automation 也在 STA 上更稳。
+/// 原因：UI Automation 的 COM 调用在 STA 线程上更稳；
+/// 鼠标钩子回调跑在线程池（MTA）线程上，直接在回调里调用容易失败。
 /// </summary>
 public static class StaRunner
 {
