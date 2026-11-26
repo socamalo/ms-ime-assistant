@@ -35,11 +35,20 @@ public sealed class TrayHost
     private readonly HotkeyForm _hotkey = new();
     private readonly Toast _toast = new();
     private readonly KeyboardHook _keyHook = new();
+    private readonly MouseHook _mouse = new();
+    private readonly QuickBar _bar = new();
 
     private PhraseStore? _store;
     private Control? _ui;
     private DateTime _lastHotkeyAt = DateTime.MinValue;
+    private string _lastShown = "";
     private int _syncing;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 
     public TrayHost(ApplicationContext context)
     {
@@ -85,7 +94,45 @@ public sealed class TrayHost
         Log.Write($"keyboard hook started={_keyHook.Start()}");
 
         RegisterHotkeys();
-        Log.Write($"start: hotkey={_settings.Hotkey}, 取词方式=只读剪贴板");
+        Log.Write($"start: hotkey={_settings.Hotkey}, 取词=选区(UIA)+剪贴板(只读)");
+
+        // 划词浮条：只读选区，不干预任何应用
+        _bar.AddRequested += text => AddPhrase(text, openDialog: false);
+        _mouse.DragSelected += OnDragSelected;
+        _mouse.AnyMouseDown += pt =>
+        {
+            if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
+        };
+        Log.Write($"mouse hook started={_mouse.Start()}");
+    }
+
+    /// <summary>拖选结束后读选区，在光标旁弹出浮条。</summary>
+    private void OnDragSelected(Point anchor)
+    {
+        if (IsOwnWindow()) return;
+
+        // 等目标应用把选区落到 UI Automation 上；某些窗口会卡，超时收紧
+        System.Threading.Thread.Sleep(160);
+        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: false), 900);
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        text = text.Trim();
+        if (text.Length == 0 || text.Length > 300) return;
+
+        Post(() =>
+        {
+            if (text == _lastShown && _bar.Visible) return;
+            _lastShown = text;
+            _bar.ShowAt(text, anchor);
+        });
+    }
+
+    private bool IsOwnWindow()
+    {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(fg, out var pid);
+        return pid == (uint)Environment.ProcessId;
     }
 
     // ---------- 热键 ----------
@@ -359,6 +406,7 @@ public sealed class TrayHost
 
     private void Shutdown()
     {
+        _mouse.Shutdown();
         _keyHook.Shutdown();
         _hotkey.Close();
         _tray.Visible = false;
