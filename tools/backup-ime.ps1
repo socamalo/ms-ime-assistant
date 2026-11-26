@@ -1,4 +1,4 @@
-<#
+﻿<#
   backup-ime.ps1 -- snapshot Microsoft Pinyin user data before touching it.
 
   Usage:

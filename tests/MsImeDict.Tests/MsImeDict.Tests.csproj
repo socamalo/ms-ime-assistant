@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MsImeDict.Core\MsImeDict.Core.csproj" />
+    <ProjectReference Include="..\..\src\MsImeDict.Core\MsImeDict.Core.csproj" />
   </ItemGroup>
 
 </Project>

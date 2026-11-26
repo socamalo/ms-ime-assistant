@@ -43,10 +43,14 @@ public sealed class PhraseStore : IDisposable
 {
     private readonly SqliteConnection _conn;
 
+    /// <summary>本库对应的 sqlite 文件路径。</summary>
+    public string DatabaseFile { get; }
+
     public PhraseStore(string? dbPath = null)
     {
         Paths.EnsureDirectories();
         var path = dbPath ?? Paths.DatabaseFile;
+        DatabaseFile = path;
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
         InitSchema();
@@ -274,7 +278,12 @@ ON CONFLICT(id) DO UPDATE SET
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..16];
 
-    public void Dispose() => _conn.Dispose();
+    public void Dispose()
+    {
+        _conn.Dispose();
+        // sqlite 连接池会继续持有文件句柄，释放后必须清池，否则测试/备份时删不掉文件
+        SqliteConnection.ClearAllPools();
+    }
 }
 
 internal static class LogJson

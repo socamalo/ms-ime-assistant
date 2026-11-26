@@ -1,3 +1,4 @@
+dist/
 # local data, never commit
 .local/
 *.db

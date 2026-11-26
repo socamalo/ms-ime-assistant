@@ -113,7 +113,7 @@ public sealed class TrayHost
                 var result = new ImeDeployer().Deploy(_store.Project());
                 if (result.Ok)
                     _tray.ShowBalloonTip(5000, "已加入个人词典",
-                        $"「{text}」已写入，切换一次输入法即可看到", ToolTipIcon.Info);
+                        $"「{text}」已写入，稍等片刻即可看到（输入法会自行刷新短语表）", ToolTipIcon.Info);
                 else
                     _tray.ShowBalloonTip(6000, "写入失败", result.Message, ToolTipIcon.Error);
             }

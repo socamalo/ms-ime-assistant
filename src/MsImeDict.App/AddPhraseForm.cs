@@ -58,7 +58,7 @@ public sealed class AddPhraseForm : Form
             Dock = DockStyle.Bottom,
             Height = 34,
             ForeColor = Color.DimGray,
-            Text = info.Notes.Count > 0 ? string.Join("；", info.Notes) : "写入后切换一次输入法即可看到该词"
+            Text = info.Notes.Count > 0 ? string.Join("；", info.Notes) : "写入后稍等片刻即可看到该词"
         };
 
         Controls.Add(buttons);

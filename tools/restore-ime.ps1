@@ -1,4 +1,4 @@
-<#
+﻿<#
   restore-ime.ps1 -- restore the IME data directory from a snapshot.
 
   Usage:

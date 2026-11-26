@@ -37,6 +37,10 @@ public sealed class PinyinTable
             if (!int.TryParse(codePoint.AsSpan(2), System.Globalization.NumberStyles.HexNumber, null, out int cp))
                 continue;
 
+            // 只收 BMP（U+0000..U+FFFF）。扩展 B 区及以上的字码点会被 (char) 截断，
+            // 截断后恰好等于某个常用字时会把它的读音覆盖掉（实测：闪被读成 zhou）
+            if (cp > 0xFFFF) continue;
+
             var rest = line[(colon + 1)..];
             int hash = rest.IndexOf('#');
             if (hash >= 0) rest = rest[..hash];

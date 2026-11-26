@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- 取词用 System.Windows.Automation，它随 WPF 的引用程序集一起提供 -->
+    <UseWPF>true</UseWPF>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RootNamespace>MsImeDict.App</RootNamespace>
     <AssemblyName>msimdict-app</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>

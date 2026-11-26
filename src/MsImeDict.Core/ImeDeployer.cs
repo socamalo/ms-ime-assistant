@@ -47,14 +47,28 @@ public sealed class ImeDeployer
         foreach (var e in existing) byCode[e.Code] = e;
         foreach (var e in store) byCode[e.Code] = e;
 
-        var final = byCode.Values
-            .Where(e => e.Code.Length > 0
-                        && e.Code.Length <= Mschxudp.MaxCodeLength
-                        && e.Word.Length > 0
-                        && e.Word.Length <= Mschxudp.MaxWordLength)
-            .OrderBy(e => e.Code, StringComparer.Ordinal)
-            .Take(MaxEntries)
-            .ToList();
+        var final = new List<PhraseEntry>();
+        foreach (var e in byCode.Values.OrderBy(x => x.Code, StringComparer.Ordinal))
+        {
+            if (final.Count >= MaxEntries)
+            {
+                result.Problems.Add($"超出条数上限 {MaxEntries}，其余条目未写入");
+                break;
+            }
+            if (e.Code.Length == 0) { result.Problems.Add($"跳过：编码为空（{e.Word}）"); continue; }
+            if (e.Code.Length > Mschxudp.MaxCodeLength)
+            {
+                result.Problems.Add($"跳过：编码超过 {Mschxudp.MaxCodeLength} 字符（{e.Code}）");
+                continue;
+            }
+            if (e.Word.Length == 0) { result.Problems.Add($"跳过：词面为空（{e.Code}）"); continue; }
+            if (e.Word.Length > Mschxudp.MaxWordLength)
+            {
+                result.Problems.Add($"跳过：词面超过 {Mschxudp.MaxWordLength} 字符（{e.Code}）");
+                continue;
+            }
+            final.Add(e);
+        }
 
         result.EntryCount = final.Count;
         result.KeptCount = final.Count(e => storeCodes.Contains(e.Code));
@@ -101,11 +115,11 @@ public sealed class ImeDeployer
             File.WriteAllBytes(tmp, payload);
             File.Move(tmp, LexPath, overwrite: true);
         }
-        catch (IOException ex)
+        catch (Exception ex)
         {
             TryDelete(tmp);
             result.Ok = false;
-            result.Message = $"写入失败（文件可能正被输入法占用）：{ex.Message}";
+            result.Message = $"写入失败（文件可能正被输入法占用，或目标只读）：{ex.Message}";
             return result;
         }
 

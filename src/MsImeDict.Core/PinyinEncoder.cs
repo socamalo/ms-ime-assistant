@@ -14,6 +14,9 @@ public sealed class PinyinEncoder
     /// <summary>多音字组合数上限，超过就只取首选读音，避免组合爆炸。</summary>
     public const int MaxReadingCombos = 16;
 
+    /// <summary>一个词条最多产出多少个编码。</summary>
+    public const int MaxCodes = 6;
+
     public sealed class Encoded
     {
         public string Full { get; init; } = "";      // 全拼，如 shankuangmoyao
@@ -42,10 +45,10 @@ public sealed class PinyinEncoder
             string[] readings;
             if (part.IsChinese)
             {
-                readings = PinyinTable.Readings(part.Ch);
+                readings = PinyinTable.Readings(part.Text[0]);
                 if (readings.Length == 0)
                 {
-                    notes.Add($"字「{part.Ch}」没有读音数据，已跳过");
+                    notes.Add($"字「{part.Text}」没有读音数据，已跳过");
                     continue;
                 }
             }
@@ -77,15 +80,20 @@ public sealed class PinyinEncoder
         }
 
         // 全拼太长就只留简拼
+        var hasChinese = usableParts.Any(p => p.IsChinese);
         var codes = new List<string>();
         foreach (var f in full)
         {
             if (f.Length <= Mschxudp.MaxCodeLength) codes.Add(f);
             else notes.Add($"全拼 '{f}' 超过 {Mschxudp.MaxCodeLength} 字符，丢弃");
         }
-        foreach (var a in abbr)
+        // 纯英文/数字的词不给简拼：单字母简拼会把整个按键劫持掉
+        if (hasChinese)
         {
-            if (a.Length <= Mschxudp.MaxCodeLength && !codes.Contains(a)) codes.Add(a);
+            foreach (var a in abbr)
+            {
+                if (a.Length <= Mschxudp.MaxCodeLength && !codes.Contains(a)) codes.Add(a);
+            }
         }
 
         // u / v 开头会撞微软拼音的模式键
@@ -98,6 +106,13 @@ public sealed class PinyinEncoder
                 filtered.Add(c);
         }
         codes = filtered;
+
+        // 多音字会放大编码数量，收敛到前 6 个
+        if (codes.Count > MaxCodes)
+        {
+            notes.Add($"编码超过 {MaxCodes} 个，只保留前 {MaxCodes} 个");
+            codes = codes.Take(MaxCodes).ToList();
+        }
 
         if (codes.Count == 0) notes.Add("没有可用编码");
 

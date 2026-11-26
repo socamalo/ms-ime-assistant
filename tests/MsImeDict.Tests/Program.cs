@@ -148,9 +148,10 @@ public static class Program
         Assert(b.Full == "woceshi", $"全拼错误：{b.Full}");
         Assert(b.Abbr == "wcs", $"简拼错误：{b.Abbr}");
 
+        // 龘 dá / 靐 bìng / 齉 nàng —— 读音以 pinyin-data 为准
         var c = enc.Encode("龘靐齉");
-        Assert(c.Full == "daliannao", $"全拼错误：{c.Full}");
-        Assert(c.Abbr == "dln", $"简拼错误：{c.Abbr}");
+        Assert(c.Full == "dabingnang", $"全拼错误：{c.Full}");
+        Assert(c.Abbr == "dbn", $"简拼错误：{c.Abbr}");
 
         var d = enc.Encode("Claude Code");
         Assert(d.Full == "claudecode", $"英文处理错误：{d.Full}");
@@ -225,14 +226,31 @@ public static class Program
             Assert(ok.Ok, "首次部署失败");
             var first = File.ReadAllBytes(temp);
 
-            var bad = deployer.Deploy(new List<PhraseEntry> { new("x", new string('甲', 100), 1) });
-            Assert(!bad.Ok, "超长词面竟然部署成功了");
-            var second = File.ReadAllBytes(temp);
-            Assert(first.SequenceEqual(second), "失败部署竟然改动了文件");
+            // 超长词面应当在预览阶段被跳过并报告，而不是把整批都写坏
+            var skipped = deployer.Deploy(new List<PhraseEntry>
+            {
+                new("abc", "程序词", 1),
+                new("x", new string('甲', 100), 1)
+            });
+            Assert(skipped.Ok, "含非法条目时应当跳过并继续：" + skipped.Message);
+            Assert(skipped.Problems.Count > 0, "非法条目未被报告");
+            var afterSkip = Mschxudp.Parse(File.ReadAllBytes(temp));
+            Assert(afterSkip.Count == 1 && afterSkip[0].Code == "abc", "非法条目被写进了文件");
+
+            // 目标文件只读时，写入必须失败且不改动原内容
+            File.SetAttributes(temp, FileAttributes.ReadOnly);
+            var blocked = deployer.Deploy(new List<PhraseEntry> { new("zzz", "另一个词", 2) });
+            File.SetAttributes(temp, FileAttributes.Normal);
+            Assert(!blocked.Ok, "只读目标竟然写入成功了");
+            Assert(Mschxudp.Parse(File.ReadAllBytes(temp)).Count == 1, "写入失败时文件被改动了");
         }
         finally
         {
-            if (File.Exists(temp)) File.Delete(temp);
+            if (File.Exists(temp))
+            {
+                File.SetAttributes(temp, FileAttributes.Normal);
+                File.Delete(temp);
+            }
         }
     }
 
