@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Company>ms-ime-dict</Company>
+    <Product>ms-ime-dict</Product>
+    <Version>0.1.0</Version>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>
