@@ -1,6 +1,5 @@
-using System.IO;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.IO;
 using MsImeDict.Core;
 
 namespace MsImeDict.App;
@@ -22,30 +21,25 @@ public static class Program
     }
 }
 
-/// <summary>托盘图标、热键、漂浮条、取词与部署。</summary>
+/// <summary>
+/// 托盘程序。
+///
+/// 取词只读系统剪贴板，不查询任何应用（不用 UIA、不发按键、不改系统设置），
+/// 所以对 Electron、自绘界面、终端、浏览器一视同仁。
+/// </summary>
 public sealed class TrayHost
 {
-    private const int MaxQuickBarTextLength = 300;
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-
     private readonly ApplicationContext _context;
     private readonly NotifyIcon _tray;
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly HotkeyForm _hotkey = new();
-    private readonly MouseHook _mouse = new();
-    private readonly QuickBar _bar = new();
     private readonly Toast _toast = new();
+    private readonly KeyboardHook _keyHook = new();
 
     private PhraseStore? _store;
     private Control? _ui;
-    private string _lastShown = "";
-    private KeyboardHook? _keyHook;
-    private ContextMenuStrip? _menu;
     private DateTime _lastHotkeyAt = DateTime.MinValue;
+    private int _syncing;
 
     public TrayHost(ApplicationContext context)
     {
@@ -53,7 +47,7 @@ public sealed class TrayHost
         _tray = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "微软拼音个人词库",
+            Text = "微软输入法助手",
             Visible = true
         };
 
@@ -73,148 +67,77 @@ public sealed class TrayHost
 
     public void Initialize()
     {
-        // 隐藏主窗口，用托盘消息驱动
         var form = new Form { WindowState = FormWindowState.Minimized, ShowInTaskbar = false, Opacity = 0 };
         _context.MainForm = form;
         form.Show();
         form.Hide();
         _ui = form;
 
-        // 热键承载窗口：真实 Form，屏幕外 1x1
         _hotkey.EnsureHandle();
         _hotkey.Triggered += combo => FireHotkey(combo);
 
-        // 第二条通道：低级键盘钩子自己认组合，绕开 RegisterHotKey 的消息投递
-        _keyHook = new KeyboardHook();
         _keyHook.Triggered += () =>
         {
             Log.Write($"keyboard hook fired ({_settings.Hotkey})");
             _keyHook.Reset();
             FireHotkey("hook");
         };
-        var kbHookOk = _keyHook.Start();
-        Log.Write($"keyboard hook started={kbHookOk}");
+        Log.Write($"keyboard hook started={_keyHook.Start()}");
 
         RegisterHotkeys();
+        Log.Write($"start: hotkey={_settings.Hotkey}, 取词方式=只读剪贴板");
+    }
 
-        _bar.AddRequested += text => AddPhrase(text, openDialog: false);
-        _bar.MoreRequested += ShowMoreMenu;
+    // ---------- 热键 ----------
 
-        _mouse.DragSelected += OnDragSelected;
-        _mouse.CtrlRightClicked += OnCtrlRightClicked;
-        _mouse.AnyMouseDown += pt =>
+    private void RegisterHotkeys()
+    {
+        if (HotkeyForm.TryParse(_settings.Hotkey, out var mods, out var vk))
         {
-            if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
-            if (_menu is not null && _menu.Visible && !_menu.Bounds.Contains(pt)) CloseMenu();
-        };
-        AccessibilityEnabler.Enable();
+            _keyHook.TargetVk = vk;
+            _keyHook.NeedCtrl = (mods & 0x0002) != 0;
+            _keyHook.NeedAlt = (mods & 0x0001) != 0;
+            _keyHook.NeedShift = (mods & 0x0004) != 0;
+            _keyHook.NeedWin = (mods & 0x0008) != 0;
+        }
 
-        var hookOk = _mouse.Start();
-        Log.Write($"mouse hook started={hookOk}");
-        if (!hookOk)
-            Notify("鼠标监听未启用", "选区浮条不可用，热键仍然有效", ToolTipIcon.Warning);
+        var combos = new List<string> { _settings.Hotkey };
+        foreach (var extra in new[] { "Ctrl+Alt+F9", "Ctrl+Shift+D" })
+            if (!combos.Contains(extra, StringComparer.OrdinalIgnoreCase)) combos.Add(extra);
+
+        var (okList, failedList) = _hotkey.RegisterAll(combos);
+        Log.Write($"hotkey register ok=[{string.Join(",", okList)}] failed=[{string.Join(",", failedList)}]");
+        if (okList.Count == 0)
+            Notify("热键注册失败", "这个组合被占用了：" + string.Join(",", failedList), ToolTipIcon.Warning);
     }
 
-    // ---------- 选区浮条 ----------
-
-    private void OnDragSelected(Point anchor)
-    {
-        if (IsOwnWindow()) return;
-
-        // 等目标应用把选区落到 UI Automation 上；UIA 在部分窗口会卡住，超时收紧
-        System.Threading.Thread.Sleep(160);
-        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: false), 900);
-        if (string.IsNullOrWhiteSpace(text)) return;
-
-        text = text.Trim();
-        if (text.Length > MaxQuickBarTextLength) return;
-
-        Post(() =>
-        {
-            if (text == _lastShown && _bar.Visible) return;
-            _lastShown = text;
-            _bar.ShowAt(text, anchor);
-        });
-    }
-
-    private void OnCtrlRightClicked(Point at)
-    {
-        if (IsOwnWindow()) return;
-        System.Threading.Thread.Sleep(120);
-        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: false), 900);
-        if (string.IsNullOrWhiteSpace(text)) return;
-        Post(() => ShowMoreMenu(text.Trim(), at));
-    }
-
-    private void ShowMoreMenu(string text, Point at)
-    {
-        CloseMenu();
-
-        var menu = new ContextMenuStrip();
-        menu.Items.Add($"「{Shorten(text)}」", null, (_, _) => { });
-        ((ToolStripMenuItem)menu.Items[0]!).Enabled = false;
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("加入个人词典", null, (_, _) => { CloseMenu(); AddPhrase(text, openDialog: false); });
-        menu.Items.Add("加入并指定编码…", null, (_, _) => { CloseMenu(); AddPhrase(text, openDialog: true); });
-        menu.Closed += (_, _) => { if (ReferenceEquals(_menu, menu)) _menu = null; };
-
-        _menu = menu;
-        menu.Show(at);
-    }
-
-    /// <summary>
-    /// 关闭当前菜单。
-    ///
-    /// 菜单的「点外部关闭」依赖 WinForms 的鼠标捕获，会被全局低级鼠标钩子干扰，
-    /// 实测出现「打开后关不掉」。这里改为自己管生命周期：任何鼠标按下、Esc、
-    /// 或再次打开菜单时都显式关掉。
-    /// </summary>
-    private void CloseMenu()
-    {
-        if (_menu is null) return;
-        try { _menu.Close(); } catch { }
-        _menu = null;
-    }
-
-    private bool IsOwnWindow()
-    {
-        var fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero) return false;
-        GetWindowThreadProcessId(fg, out var pid);
-        return pid == (uint)Environment.ProcessId;
-    }
-
-    // ---------- 取词 ----------
-
-    /// <summary>热键触发入口。RegisterHotKey 与键盘钩子两条通道都走这里，用冷却去重。</summary>
+    /// <summary>两条通道都走这里，用冷却去重。</summary>
     private void FireHotkey(string source)
     {
         var now = DateTime.UtcNow;
         if ((now - _lastHotkeyAt).TotalMilliseconds < 500) return;
         _lastHotkeyAt = now;
-        Log.Write($"hotkey -> capture ({source})");
-        Post(CaptureSelection);
+        Log.Write($"hotkey trigged ({source})");
+        Post(CaptureClipboard);
     }
 
-    private void CaptureSelection()
+    // ---------- 取词 ----------
+
+    /// <summary>读剪贴板 -> 入库 -> 写入输入法 -> 提示。</summary>
+    private void CaptureClipboard()
     {
-        // 热键路径：优先读剪贴板（先 Ctrl+C 再按热键），剪贴板没字才看 UIA 选区
-        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: true), 2500);
+        var text = StaRunner.Run(() => SelectionReader.Read(), 2000);
         Log.Write($"capture: length={text?.Length ?? -1} source={SelectionReader.LastSource}");
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            Notify("没有可加入的内容",
-                "先选中文字按 Ctrl+C 复制，再按热键；或者直接在输入法里选中文字后按热键",
+            Notify("剪贴板里没有文字",
+                "先选中文字按 Ctrl+C 复制，再按一次热键",
                 ToolTipIcon.Info);
             return;
         }
 
-        var trimmed = text.Trim();
-        if (trimmed.Length == 0) return;
-
-        // 一步到位：读到什么就直接加入，不弹对话框
-        AddPhrase(trimmed, openDialog: false);
+        AddPhrase(text.Trim(), openDialog: false);
     }
 
     // ---------- 加词 ----------
@@ -225,9 +148,8 @@ public sealed class TrayHost
         {
             _store ??= new PhraseStore();
 
-            // 同一个词重复按热键不应重复入库
             var existingWord = _store.FindByText(text);
-            if (existingWord is not null && openDialog == false)
+            if (existingWord is not null && !openDialog)
             {
                 Log.Write($"skip duplicate: {text}");
                 Post(() => _toast.ShowToast($"「{Shorten(text)}」已在词典中"));
@@ -241,9 +163,9 @@ public sealed class TrayHost
                 Notes = encoded.Notes.ToList()
             };
 
+            var word = text;
             List<string> codes;
             int rank;
-            var word = text;
 
             if (openDialog)
             {
@@ -260,10 +182,9 @@ public sealed class TrayHost
 
                 if (!string.Equals(word, text, StringComparison.Ordinal))
                 {
-                    // 用户改了词面，编码要按新词面重算
                     var again = new PinyinEncoder().Encode(word);
                     codes = again.CandidateCodes.ToList();
-                    Log.Write($"re-encoded after edit: {word} -> {string.Join(",", codes)}");
+                    Log.Write($"re-encoded: {word} -> {string.Join(",", codes)}");
                 }
                 else
                 {
@@ -278,29 +199,22 @@ public sealed class TrayHost
 
             if (codes.Count == 0)
             {
-                Notify("没有可用编码", "请在「加入并指定编码…」里手工填写", ToolTipIcon.Warning);
+                Notify("无法生成编码", "这段内容里没有可编码的汉字或字母", ToolTipIcon.Warning);
                 return;
             }
 
-            foreach (var code in codes) _store.Add(word, code, rank, source: "selection");
-
-            if (!_settings.AutoDeploy)
-            {
-                Notify("已加入词库", $"「{Shorten(word)}」已入库，点托盘菜单「立即写入输入法」生效", ToolTipIcon.Info);
-                return;
-            }
+            foreach (var code in codes) _store.Add(word, code, rank, source: "clipboard");
 
             var result = new ImeDeployer().Deploy(_store.Project());
-            if (result.Ok)
+            if (!result.Ok)
             {
-                Log.Write($"added: {word} -> {string.Join(",", codes)}");
-                Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
-                if (_settings.SyncEnabled) SyncInBackground();
+                Notify("写入输入法失败", result.Message, ToolTipIcon.Error);
+                return;
             }
-            else
-            {
-                Notify("写入失败", result.Message, ToolTipIcon.Error);
-            }
+
+            Log.Write($"added: {word} -> {string.Join(",", codes)}");
+            Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
+            if (_settings.SyncEnabled) SyncInBackground();
         }
         catch (Exception ex)
         {
@@ -308,7 +222,7 @@ public sealed class TrayHost
         }
     }
 
-    // ---------- 菜单动作 ----------
+    // ---------- 菜单 ----------
 
     private void OpenManager()
     {
@@ -321,17 +235,36 @@ public sealed class TrayHost
         catch (Exception ex) { Notify("打开词库失败", ex.Message, ToolTipIcon.Error); }
     }
 
-    private void DeployNow()
+    private void OpenSettings()
     {
         try
         {
-            _store ??= new PhraseStore();
-            var result = new ImeDeployer().Deploy(_store.Project());
-            Notify(result.Ok ? "已写入输入法" : "写入失败",
-                result.Ok ? $"{result.EntryCount} 条已生效，直接打字即可" : result.Message,
-                result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error);
+            using var form = new SettingsForm(_settings);
+            if (form.ShowDialog() != DialogResult.OK) return;
+            RegisterHotkeys();
+            if (form.SyncRequested) SyncNow();
+            else Notify("设置已保存", "快捷键：" + _settings.Hotkey, ToolTipIcon.Info);
         }
-        catch (Exception ex) { Notify("出错了", ex.Message, ToolTipIcon.Error); }
+        catch (Exception ex) { Notify("保存设置失败", ex.Message, ToolTipIcon.Error); }
+    }
+
+    private void ShowAbout()
+    {
+        var version = typeof(TrayHost).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+        var text = string.Join(Environment.NewLine, new[]
+        {
+            "微软输入法助手",
+            $"版本 {version}",
+            "",
+            "作者：Daniel Ding",
+            "联系方式：flaming.ding@gmail.com",
+            "",
+            "取词方式：只读系统剪贴板（先 Ctrl+C 复制，再按热键）",
+            "词条数据仓库：socamalo/ms-ime-dict-data（私有）",
+            $"本地词库：{Paths.DatabaseFile}",
+            $"输入法文件：{Paths.LexFile}"
+        });
+        MessageBox.Show(text, "关于 微软输入法助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void SyncNow()
@@ -351,8 +284,6 @@ public sealed class TrayHost
         }
         catch (Exception ex) { Notify("同步出错", ex.Message, ToolTipIcon.Error); }
     }
-
-    private int _syncing;
 
     /// <summary>后台同步：失败只写日志，不打扰用户；同一时刻只跑一个。</summary>
     private void SyncInBackground()
@@ -375,67 +306,6 @@ public sealed class TrayHost
             catch (Exception ex) { Log.Write("background sync failed: " + ex.Message); }
             finally { Interlocked.Exchange(ref _syncing, 0); }
         });
-    }
-
-    private void ShowAbout()
-    {
-        var version = typeof(TrayHost).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
-        var text = string.Join(Environment.NewLine, new[]
-        {
-            "微软拼音个人词库",
-            $"版本 {version}",
-            "",
-            "作者：Daniel Ding",
-            "联系方式：flaming.ding@gmail.com",
-            "",
-            "词条数据仓库：socamalo/ms-ime-dict-data（私有）",
-            $"本地词库：{Paths.DatabaseFile}",
-            $"输入法文件：{Paths.LexFile}",
-            "",
-            "取词只读剪贴板，不写入；所有写入都可从备份回滚。"
-        });
-        MessageBox.Show(text, "关于", MessageBoxButtons.OK, MessageBoxIcon.Information);
-    }
-
-    private void OpenSettings()
-    {
-        try
-        {
-            using var form = new SettingsForm(_settings);
-            if (form.ShowDialog() != DialogResult.OK) return;
-            ApplyHotkeySettings();
-            if (form.SyncRequested) SyncNow();
-            else Notify("设置已保存", "快捷键：" + _settings.Hotkey, ToolTipIcon.Info);
-        }
-        catch (Exception ex) { Notify("保存设置失败", ex.Message, ToolTipIcon.Error); }
-    }
-
-    /// <summary>按当前设置注册热键。设置里改过热键后会重新调用。</summary>
-    private void RegisterHotkeys()
-    {
-        if (HotkeyForm.TryParse(_settings.Hotkey, out var mods, out var vk))
-        {
-            _keyHook!.TargetVk = vk;
-            _keyHook.NeedCtrl = (mods & 0x0002) != 0;
-            _keyHook.NeedAlt = (mods & 0x0001) != 0;
-            _keyHook.NeedShift = (mods & 0x0004) != 0;
-            _keyHook.NeedWin = (mods & 0x0008) != 0;
-        }
-
-        var combos = new List<string> { _settings.Hotkey };
-        foreach (var extra in new[] { "Ctrl+Alt+F9", "Ctrl+Shift+D" })
-            if (!combos.Contains(extra, StringComparer.OrdinalIgnoreCase)) combos.Add(extra);
-
-        var (okList, failedList) = _hotkey.RegisterAll(combos);
-        Log.Write($"hotkey register ok=[{string.Join(",", okList)}] failed=[{string.Join(",", failedList)}]");
-        if (okList.Count == 0)
-            Notify("热键注册失败", "这个组合被占用了：" + string.Join(",", failedList), ToolTipIcon.Warning);
-    }
-
-    /// <summary>设置里改了热键后重新注册。</summary>
-    private void ApplyHotkeySettings()
-    {
-        RegisterHotkeys();
     }
 
     private static void OpenFolder(string path)
@@ -463,10 +333,8 @@ public sealed class TrayHost
 
     private void Shutdown()
     {
-        _mouse.Shutdown();
+        _keyHook.Shutdown();
         _hotkey.Close();
-        _keyHook?.Shutdown();
-        AccessibilityEnabler.Restore();
         _tray.Visible = false;
         _tray.Dispose();
         _store?.Dispose();
