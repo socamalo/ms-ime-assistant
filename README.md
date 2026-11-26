@@ -83,6 +83,13 @@ tools\msimdict-app.cmd                # 托盘常驻：Ctrl+Alt+D 取词加词
 
 托盘菜单：加入选中的文字 / 立即写入输入法 / 同步到私有仓库 / 词库目录 / 设置。
 
+## 作者
+
+**Daniel Ding**（丁燚）
+联系方式：<flaming.ding@gmail.com>
+
+这是一个中文输入法的问题，所以文档全部用中文写。
+
 ## 许可
 
 MIT

@@ -1,7 +1,9 @@
 <Project>
   <PropertyGroup>
-    <Company>ms-ime-dict</Company>
+    <Company>Daniel Ding</Company>
     <Product>ms-ime-dict</Product>
+    <Authors>Daniel Ding</Authors>
+    <Copyright>© 2026 Daniel Ding &lt;flaming.ding@gmail.com&gt;</Copyright>
     <Version>0.1.0</Version>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>

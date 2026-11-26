@@ -64,6 +64,7 @@ public sealed class TrayHost
         menu.Items.Add("词库目录", null, (_, _) => OpenFolder(Paths.AppDataDir));
         menu.Items.Add("设置…", null, (_, _) => OpenSettings());
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("关于", null, (_, _) => ShowAbout());
         menu.Items.Add("退出", null, (_, _) => Shutdown());
         _tray.ContextMenuStrip = menu;
 
@@ -358,6 +359,26 @@ public sealed class TrayHost
             catch (Exception ex) { Log.Write("background sync failed: " + ex.Message); }
             finally { Interlocked.Exchange(ref _syncing, 0); }
         });
+    }
+
+    private void ShowAbout()
+    {
+        var version = typeof(TrayHost).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+        var text = string.Join(Environment.NewLine, new[]
+        {
+            "微软拼音个人词库",
+            $"版本 {version}",
+            "",
+            "作者：Daniel Ding",
+            "联系方式：flaming.ding@gmail.com",
+            "",
+            "词条数据仓库：socamalo/ms-ime-dict-data（私有）",
+            $"本地词库：{Paths.DatabaseFile}",
+            $"输入法文件：{Paths.LexFile}",
+            "",
+            "取词只读剪贴板，不写入；所有写入都可从备份回滚。"
+        });
+        MessageBox.Show(text, "关于", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void OpenSettings()
