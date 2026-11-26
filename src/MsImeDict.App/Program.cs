@@ -113,7 +113,7 @@ public sealed class TrayHost
                 var result = new ImeDeployer().Deploy(_store.Project());
                 if (result.Ok)
                     _tray.ShowBalloonTip(5000, "已加入个人词典",
-                        $"「{text}」已写入，稍等片刻即可看到（输入法会自行刷新短语表）", ToolTipIcon.Info);
+                        $"「{text}」已入库并写入输入法，直接打字即可", ToolTipIcon.Info);
                 else
                     _tray.ShowBalloonTip(6000, "写入失败", result.Message, ToolTipIcon.Error);
             }
@@ -135,7 +135,7 @@ public sealed class TrayHost
             _store ??= new PhraseStore();
             var result = new ImeDeployer().Deploy(_store.Project());
             _tray.ShowBalloonTip(5000, result.Ok ? "已写入输入法" : "写入失败",
-                result.Ok ? $"{result.EntryCount} 条已生效，切换一次输入法即可看到" : result.Message,
+                result.Ok ? $"{result.EntryCount} 条已生效，直接打字即可" : result.Message,
                 result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error);
         }
         catch (Exception ex)
