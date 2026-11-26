@@ -38,6 +38,7 @@ public sealed class TrayHost
     private readonly HotkeyForm _hotkey = new();
     private readonly MouseHook _mouse = new();
     private readonly QuickBar _bar = new();
+    private readonly Toast _toast = new();
 
     private PhraseStore? _store;
     private Control? _ui;
@@ -192,13 +193,15 @@ public sealed class TrayHost
     {
         var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
         Log.Write("capture: length=" + (text?.Length ?? -1));
+
         if (string.IsNullOrWhiteSpace(text))
         {
-            // 取不到选区时也打开对话框，让用户直接粘贴或手输
-            AddPhrase("", openDialog: true);
+            Notify("没有选中文字", "先在目标窗口里选中文字，再按热键", ToolTipIcon.Info);
             return;
         }
-        AddPhrase(text.Trim(), openDialog: true);
+
+        // 热键是「一步到位」：读到什么就直接加入，不弹对话框
+        AddPhrase(text.Trim(), openDialog: false);
     }
 
     // ---------- 加词 ----------
@@ -266,9 +269,14 @@ public sealed class TrayHost
 
             var result = new ImeDeployer().Deploy(_store.Project());
             if (result.Ok)
-                Notify("已加入个人词典", $"「{Shorten(word)}」已写入输入法，直接打字即可", ToolTipIcon.Info);
+            {
+                Log.Write($"added: {word} -> {string.Join(",", codes)}");
+                Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
+            }
             else
+            {
                 Notify("写入失败", result.Message, ToolTipIcon.Error);
+            }
         }
         catch (Exception ex)
         {
