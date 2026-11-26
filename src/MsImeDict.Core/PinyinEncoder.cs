@@ -1,0 +1,150 @@
+using System.Text;
+
+namespace MsImeDict.Core;
+
+/// <summary>
+/// 把词条文本转成微软拼音自定义短语可用的编码。
+///
+/// 微软拼音是按「你打的字」字面匹配自定义短语的，所以同一词条写两条最划算：
+///   - 全拼（如 shankuangmoyao）：你打全拼音时命中
+///   - 简拼（如 skmy）：你打首字母时命中
+/// </summary>
+public sealed class PinyinEncoder
+{
+    /// <summary>多音字组合数上限，超过就只取首选读音，避免组合爆炸。</summary>
+    public const int MaxReadingCombos = 16;
+
+    public sealed class Encoded
+    {
+        public string Full { get; init; } = "";      // 全拼，如 shankuangmoyao
+        public string Abbr { get; init; } = "";      // 简拼，如 skmy
+        public IReadOnlyList<string> CandidateCodes { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
+    }
+
+    /// <summary>生成候选编码。全拼与简拼各取若干读音组合。</summary>
+    public Encoded Encode(string text)
+    {
+        var notes = new List<string>();
+        var parts = SplitParts(text);
+
+        if (parts.Count == 0)
+        {
+            notes.Add("文本里没有可编码的内容");
+            return new Encoded { Notes = notes };
+        }
+
+        // 每个字的所有读音
+        var readingsPerPart = new List<string[]>();
+        foreach (var part in parts)
+        {
+            if (part.IsChinese)
+                readingsPerPart.Add(PinyinTable.Readings(part.Ch));
+            else
+                readingsPerPart.Add(new[] { part.Text });
+        }
+
+        var combos = ExpandCombinations(readingsPerPart);
+
+        var full = new List<string>();
+        var abbr = new List<string>();
+        foreach (var combo in combos)
+        {
+            var f = string.Concat(combo);
+            var a = string.Concat(combo.Select((s, i) =>
+                parts[i].IsChinese ? s[..1] : parts[i].Text[..1]));
+            if (!full.Contains(f)) full.Add(f);
+            if (!abbr.Contains(a)) abbr.Add(a);
+        }
+
+        // 全拼太长就只留简拼
+        var codes = new List<string>();
+        foreach (var f in full)
+        {
+            if (f.Length <= Mschxudp.MaxCodeLength) codes.Add(f);
+            else notes.Add($"全拼 '{f}' 超过 {Mschxudp.MaxCodeLength} 字符，丢弃");
+        }
+        foreach (var a in abbr)
+        {
+            if (a.Length <= Mschxudp.MaxCodeLength && !codes.Contains(a)) codes.Add(a);
+        }
+
+        // u / v 开头会撞微软拼音的模式键
+        var filtered = new List<string>();
+        foreach (var c in codes)
+        {
+            if (c.Length > 0 && (c[0] == 'u' || c[0] == 'v'))
+                notes.Add($"编码 '{c}' 以 u/v 开头，会与输入法模式键冲突，丢弃");
+            else
+                filtered.Add(c);
+        }
+        codes = filtered;
+
+        if (codes.Count == 0) notes.Add("没有可用编码");
+
+        return new Encoded
+        {
+            Full = full.FirstOrDefault() ?? "",
+            Abbr = abbr.FirstOrDefault() ?? "",
+            CandidateCodes = codes,
+            Notes = notes
+        };
+    }
+
+    private static List<(string Text, bool IsChinese)> SplitParts(string text)
+    {
+        var parts = new List<(string, bool)>();
+        var latin = new StringBuilder();
+
+        void FlushLatin()
+        {
+            if (latin.Length == 0) return;
+            parts.Add((latin.ToString().ToLowerInvariant(), false));
+            latin.Clear();
+        }
+
+        foreach (var ch in text)
+        {
+            if (ch >= '\u4E00' && ch <= '\u9FFF')
+            {
+                FlushLatin();
+                parts.Add((ch.ToString(), true));
+            }
+            else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))
+            {
+                latin.Append(ch);
+            }
+            else if (ch >= '0' && ch <= '9')
+            {
+                // 数字在编码字符集之外，丢弃
+            }
+            else
+            {
+                // 空格、标点等一律丢弃
+            }
+        }
+        FlushLatin();
+        return parts;
+    }
+
+    private static List<string[]> ExpandCombinations(List<string[]> readingsPerPart)
+    {
+        var combos = new List<string[]> { Array.Empty<string>() };
+        foreach (var readings in readingsPerPart)
+        {
+            if (readings.Length == 0) continue;
+            var next = new List<string[]>();
+            foreach (var c in combos)
+                foreach (var r in readings)
+                    next.Add(c.Concat(new[] { r }).ToArray());
+            combos = next;
+            if (combos.Count > MaxReadingCombos)
+            {
+                // 组合爆炸时收敛到首选读音
+                combos = combos.Take(MaxReadingCombos).ToList();
+                break;
+            }
+        }
+        return combos;
+    }
+}
