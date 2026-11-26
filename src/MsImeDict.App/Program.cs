@@ -99,10 +99,6 @@ public sealed class TrayHost
         // 划词浮条：只读选区，不干预任何应用
         _bar.AddRequested += text => AddPhrase(text, openDialog: false);
         _mouse.DragSelected += OnDragSelected;
-        _mouse.AnyMouseDown += pt =>
-        {
-            if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
-        };
         Log.Write($"mouse hook started={_mouse.Start()}");
     }
 
@@ -314,38 +310,73 @@ public sealed class TrayHost
         MessageBox.Show(text, "关于 微软输入法助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    private void SyncNow()
+    /// <summary>远端设置更新时应用它：写盘 + 重新注册热键。</summary>
+    private void ApplyRemoteSettings(SyncResult result)
     {
+        if (result.RemoteSettings is null) return;
         try
         {
-            _store ??= new PhraseStore();
-            var result = new SyncAgent(_store).Sync(new Core.SyncSettings
+            _settings.ApplyPortable(result.RemoteSettings);
+            _settings.Save();
+            Post(() =>
             {
-                Enabled = _settings.SyncEnabled,
-                RepoPath = _settings.RepoPath,
-                RemoteUrl = _settings.RemoteUrl,
-                Branch = _settings.Branch
+                RegisterHotkeys();
+                _toast.ShowToast($"已应用另一台设备的设置（{_settings.Hotkey}）");
             });
-
-            // 从别的设备拉回来的词条要重新投影进输入法，否则只在母库里
-            if (result.Ok && result.Pulled > 0)
-            {
-                var deploy = new ImeDeployer().Deploy(_store.Project());
-                if (!deploy.Ok)
-                {
-                    Notify("同步成功，但写入输入法失败", deploy.Message, ToolTipIcon.Error);
-                    return;
-                }
-                Log.Write($"sync: pulled={result.Pulled}, deployed={deploy.EntryCount}");
-                Notify("同步完成", $"拉取 {result.Pulled} 条，已写入输入法（共 {deploy.EntryCount} 条）",
-                    ToolTipIcon.Info);
-                return;
-            }
-
-            Notify(result.Ok ? "同步完成" : "同步失败", result.Message,
-                result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error);
+            Log.Write($"settings applied from remote: {_settings.Hotkey}");
         }
-        catch (Exception ex) { Notify("同步出错", ex.Message, ToolTipIcon.Error); }
+        catch (Exception ex) { Log.Write("apply remote settings failed: " + ex.Message); }
+    }
+
+    private void SyncNow()
+    {
+        // 必须在后台线程跑：git 联网要几秒到几十秒，
+        // 而这个线程挂着鼠标/键盘的低级钩子，阻塞它会让全系统输入卡住。
+        if (Interlocked.CompareExchange(ref _syncing, 1, 0) != 0)
+        {
+            Notify("正在同步", "上一轮同步还没结束", ToolTipIcon.Info);
+            return;
+        }
+
+        Task.Run(() =>
+        {
+            try
+            {
+                if (_store is null) return;
+
+                var result = new SyncAgent(_store).Sync(new Core.SyncSettings
+                {
+                    Enabled = _settings.SyncEnabled,
+                    RepoPath = _settings.RepoPath,
+                    RemoteUrl = _settings.RemoteUrl,
+                    Branch = _settings.Branch,
+                    LocalSettings = _settings.ToPortable()
+                });
+
+                ApplyRemoteSettings(result);
+
+                if (result.Ok && result.Pulled > 0)
+                {
+                    var deploy = new ImeDeployer().Deploy(_store.Project());
+                    Log.Write($"sync: pulled={result.Pulled}, deploy ok={deploy.Ok} entries={deploy.EntryCount}");
+                    Post(() => Notify(deploy.Ok ? "同步完成" : "同步成功，写入失败",
+                        deploy.Ok ? $"拉取 {result.Pulled} 条，已写入输入法（共 {deploy.EntryCount} 条）" : deploy.Message,
+                        deploy.Ok ? ToolTipIcon.Info : ToolTipIcon.Error));
+                }
+                else
+                {
+                    Log.Write($"sync: ok={result.Ok} pushed={result.Pushed} pulled={result.Pulled} {result.Message}");
+                    Post(() => Notify(result.Ok ? "同步完成" : "同步失败", result.Message,
+                        result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("sync failed: " + ex.Message);
+                Post(() => Notify("同步出错", ex.Message, ToolTipIcon.Error));
+            }
+            finally { Interlocked.Exchange(ref _syncing, 0); }
+        });
     }
 
     /// <summary>后台同步：失败只写日志，不打扰用户；同一时刻只跑一个。</summary>
@@ -362,8 +393,11 @@ public sealed class TrayHost
                     Enabled = _settings.SyncEnabled,
                     RepoPath = _settings.RepoPath,
                     RemoteUrl = _settings.RemoteUrl,
-                    Branch = _settings.Branch
+                    Branch = _settings.Branch,
+                    LocalSettings = _settings.ToPortable()
                 });
+
+                ApplyRemoteSettings(result);
 
                 if (result.Ok && result.Pulled > 0)
                 {

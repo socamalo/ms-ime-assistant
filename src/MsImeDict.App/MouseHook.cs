@@ -46,10 +46,8 @@ public sealed class MouseHook : NativeWindow
     private POINT _downPoint;
     private bool _dragging;
 
-    /// <summary>拖选结束，参数为松开位置（屏幕坐标）。</summary>
+    /// <summary>拖选结束，参数为松开位置（屏幕坐标）。在后台线程回调。</summary>
     public event Action<Point>? DragSelected;
-    /// <summary>任意鼠标按下，用于隐藏浮条。</summary>
-    public event Action<Point>? AnyMouseDown;
 
     public MouseHook()
     {
@@ -84,7 +82,6 @@ public sealed class MouseHook : NativeWindow
             case WM_LBUTTONDOWN:
                 _downPoint = data.pt;
                 _dragging = false;
-                AnyMouseDown?.Invoke(pt);
                 break;
 
             case WM_MOUSEMOVE:
@@ -101,6 +98,8 @@ public sealed class MouseHook : NativeWindow
                 {
                     _dragging = false;
                     var end = pt;
+                    // 回调里必须立刻返回：这里只投递任务，不做任何读词或界面操作。
+                    // 低级钩子一旦阻塞，整个系统的鼠标输入都会卡住。
                     Task.Run(() => DragSelected?.Invoke(end));
                 }
                 break;

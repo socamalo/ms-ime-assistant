@@ -13,6 +13,9 @@ public sealed class SyncSettings
     public string Branch { get; set; } = "main";
     public bool Enabled { get; set; }
 
+    /// <summary>本机的可同步设置。为空时不同步设置。</summary>
+    public PortableSettings? LocalSettings { get; set; }
+
     public string EffectiveRepoPath => string.IsNullOrWhiteSpace(RepoPath)
         ? Path.Combine(Paths.AppDataDir, "sync-repo")
         : RepoPath;
@@ -26,6 +29,12 @@ public sealed class SyncResult
     public int Pushed { get; set; }
     public int Pulled { get; set; }
     public List<string> Steps { get; set; } = new();
+
+    /// <summary>远端设置有更新，需要调用方应用到本机。</summary>
+    public PortableSettings? RemoteSettings { get; set; }
+
+    /// <summary>本次把本机设置推到了远端。</summary>
+    public bool SettingsPushed { get; set; }
 }
 
 /// <summary>
@@ -61,6 +70,9 @@ public sealed class SyncAgent
             return result;
         }
 
+        // 用户可能贴的是网页地址（不带 .git），统一归一化
+        settings.RemoteUrl = RepoUrl.Normalize(settings.RemoteUrl);
+
         if (!EnsureRepo(repo, settings.RemoteUrl, settings.Branch, result))
         {
             result.Ok = false;
@@ -68,28 +80,8 @@ public sealed class SyncAgent
             return result;
         }
 
-        // 1) 本地变更 -> 仓库
-        var repoChanges = Path.Combine(repo, "changes");
-        Directory.CreateDirectory(repoChanges);
-        int pushed = 0;
-        foreach (var file in Directory.EnumerateFiles(Paths.ChangeDir, "*.json"))
-        {
-            var target = Path.Combine(repoChanges, Path.GetFileName(file));
-            if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))
-            {
-                File.Copy(file, target, overwrite: true);
-                pushed++;
-            }
-        }
-        result.Pushed = pushed;
-        result.Steps.Add($"本地变更上传 {pushed} 个文件");
-
-        // 2) 提交
-        Run(repo, "git add -A");
-        var commit = Run(repo, "git commit -m \"sync: 更新个人词库\"", ignoreError: true);
-        result.Steps.Add(commit.Contains("nothing to commit") ? "无新变更" : "已提交本地变更");
-
-        // 3) 拉取。远端还没有这个分支时（首次推送）跳过。
+        // 1) 先拉取。远端还没有这个分支时（首次推送）跳过。
+        //    先拉再改，工作区是干净的，不需要 commit 之后再 rebase。
         var remoteHasBranch = Run(repo, $"git ls-remote --heads origin {settings.Branch}", ignoreError: true)
             .Contains($"refs/heads/{settings.Branch}", StringComparison.Ordinal);
 
@@ -110,7 +102,46 @@ public sealed class SyncAgent
             result.Steps.Add("已拉取远端");
         }
 
-        // 4) 远端变更 -> 本地，并重放到母库
+        // 2) 设置同步：只同步可携带的几项，按 updatedAt 取新
+        var repoSettingsPath = Path.Combine(repo, PortableSettings.FileName);
+        if (settings.LocalSettings is not null)
+        {
+            var remote = PortableSettings.TryRead(repoSettingsPath);
+            if (remote is not null && remote.UpdatedAt > settings.LocalSettings.UpdatedAt)
+            {
+                result.RemoteSettings = remote;
+                result.Steps.Add($"远端设置更新于本机，待应用（{remote.Hotkey}）");
+            }
+            else
+            {
+                settings.LocalSettings.Write(repoSettingsPath);
+                result.SettingsPushed = true;
+                result.Steps.Add("本机设置写入仓库");
+            }
+        }
+
+        // 3) 本地变更 -> 仓库
+        var repoChanges = Path.Combine(repo, "changes");
+        Directory.CreateDirectory(repoChanges);
+        int pushed = 0;
+        foreach (var file in Directory.EnumerateFiles(Paths.ChangeDir, "*.json"))
+        {
+            var target = Path.Combine(repoChanges, Path.GetFileName(file));
+            if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))
+            {
+                File.Copy(file, target, overwrite: true);
+                pushed++;
+            }
+        }
+        result.Pushed = pushed;
+        result.Steps.Add($"本地变更上传 {pushed} 个文件");
+
+        // 4) 提交
+        Run(repo, "git add -A");
+        var commit = Run(repo, "git commit -m \"sync: 更新个人词库\"", ignoreError: true);
+        result.Steps.Add(commit.Contains("nothing to commit") ? "无新变更" : "已提交本地变更");
+
+        // 5) 远端变更 -> 本地，并重放到母库
         int pulled = 0;
         foreach (var file in Directory.EnumerateFiles(repoChanges, "*.json"))
         {
@@ -127,7 +158,7 @@ public sealed class SyncAgent
         foreach (var rec in PhraseStore.ReadLog()) _store.ApplyChange(rec);
         result.Steps.Add("已重放到母库");
 
-        // 5) 推送
+        // 6) 推送
         var push = Run(repo, $"git push origin {settings.Branch}", ignoreError: true);
         if (push.Contains("fatal:") || push.Contains("rejected") || push.Contains("error:"))
         {

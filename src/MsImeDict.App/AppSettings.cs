@@ -20,6 +20,27 @@ public sealed class AppSettings
     public string RemoteUrl { get; set; } = "";
     public string Branch { get; set; } = "main";
 
+    /// <summary>设置最后修改时间（Unix 秒）。跨设备同步时用它判断谁更新。</summary>
+    public long UpdatedAt { get; set; }
+
+    /// <summary>导出可跨设备同步的子集（快捷键、默认候选位、自动部署）。</summary>
+    public PortableSettings ToPortable() => new()
+    {
+        Hotkey = Hotkey,
+        DefaultRank = DefaultRank,
+        AutoDeploy = AutoDeploy,
+        UpdatedAt = UpdatedAt
+    };
+
+    /// <summary>应用远端来的设置子集。仓库地址与开机自启属于本机，不覆盖。</summary>
+    public void ApplyPortable(PortableSettings p)
+    {
+        Hotkey = p.Hotkey;
+        DefaultRank = p.DefaultRank;
+        AutoDeploy = p.AutoDeploy;
+        UpdatedAt = p.UpdatedAt;
+    }
+
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
@@ -42,6 +63,7 @@ public sealed class AppSettings
     {
         try
         {
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             Directory.CreateDirectory(Path.GetDirectoryName(Paths.SettingsFile)!);
             File.WriteAllText(Paths.SettingsFile, JsonSerializer.Serialize(this, Json));
         }

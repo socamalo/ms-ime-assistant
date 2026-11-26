@@ -165,133 +165,184 @@ pwsh -File tools\restore-ime.ps1 -Pristine            # 真正还原
 
 ## 给 AI Agent 的安装指引
 
-> 这一节是写给自动化 agent 的。人类用户看上面的"快速开始"就够了。
+> 这一节是写给自动化 agent 的。人类用户看上面的「快速开始」就够了。
+> 目标：装完、配好、验证通过，全程不需要人类点按钮。
 
-### 前提确认
+### 0. 前提检查（不满足就别继续）
 
 ```powershell
-# 1. 确认是 Windows 10/11
-[Environment]::OSVersion.Version.Major -ge 10
+# Windows 10 及以上
+if (-not ([Environment]::OSVersion.Version.Major -ge 10)) { throw '需要 Windows 10/11' }
 
-# 2. 确认微软拼音已安装（本工具只支持它）
-Get-WinUserLanguageList | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' }
+# 微软拼音必须已安装——本工具写的是它专属的文件格式，别的输入法不认
+$hasPinyin = (Get-WinUserLanguageList | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' }).Count -gt 0
+if (-not $hasPinyin) { throw '没有中文(简体)语言，先安装微软拼音再运行本工具' }
 ```
 
-如果中文输入法不在列表里，**不要继续**——本工具写的是微软拼音专属的文件格式。
-
-### 安装步骤
+### 1. 安装
 
 ```powershell
-# 1. 解压发布包到固定位置
 $dir = "$env:LOCALAPPDATA\Programs\MsImeAssistant"
 Expand-Archive -Path .\msimdict-app-win-x64.zip -DestinationPath $dir -Force
 
-# 2. 先备份，再启动（顺序不能反）
-#    备份脚本在仓库 tools\ 下，需要一并下载
-pwsh -File tools\backup-ime.ps1 -Label before-first-run
+# 先备份，再启动。顺序不能反。
+pwsh -File "$dir\tools\backup-ime.ps1" -Label before-first-run
 
-# 3. 启动托盘程序
 Start-Process "$dir\msimdict-app.exe"
 ```
 
-### 安装后自检
+发布包是自包含的，不需要预装 .NET 运行时。
+
+### 2. 首次配置
+
+**快捷键**：默认 `Ctrl+Q`，一般不用改。
+`Ctrl+Q` 是**系统级独占**——注册后任何程序里的 `Ctrl+Q` 都会被本工具接管。
+如果目标环境里这个组合冲突严重，改配置前先想清楚代价，可选的替代：`Ctrl+Alt+J`、`Ctrl+Shift+F9`。
+
+**同步仓库**（可选但推荐）：
+
+- 先建一个**空的私有仓库**（不要勾 README / .gitignore）
+- 地址填仓库网页地址即可，**带不带 `.git` 都认**：
+
+  ```
+  https://github.com/你的用户名/仓库名        ← 推荐，直接复制浏览器地址栏
+  https://github.com/你的用户名/仓库名.git
+  你的用户名/仓库名                          ← 简写也认
+  ```
+
+- 程序会自己 `git clone` 或 `git init`，之后每次加词后台自动推送
+
+配置写在 `%APPDATA%\MsImeDict\settings.json`。agent 可以直接改文件，字段如下：
+
+```json
+{
+  "Hotkey": "Ctrl+Q",
+  "DefaultRank": 2,
+  "AutoDeploy": true,
+  "AutoStart": true,
+  "SyncEnabled": true,
+  "RepoPath": "%LOCALAPPDATA%\\MsImeDict\\sync-repo",
+  "RemoteUrl": "https://github.com/你的用户名/仓库名",
+  "Branch": "main"
+}
+```
+
+改完必须重启进程才生效：`Stop-Process -Name msimdict-app -Force; Start-Process "$dir\msimdict-app.exe"`。
+
+### 3. 开机自启
+
+**方式一：写注册表（推荐）**
+
+```powershell
+$exe = "$env:LOCALAPPDATA\Programs\MsImeAssistant\msimdict-app.exe"
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+  -Name 'MsImeAssistant' -Value "`"$exe`"" -PropertyType String -Force
+
+# 确认
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant
+```
+
+**方式二：计划任务（需要失败重试时用）**
+
+```powershell
+$action   = New-ScheduledTaskAction -Execute $exe
+$trigger  = New-ScheduledTaskTrigger -AtLogOn
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName 'MsImeAssistant' -Action $action -Trigger $trigger -Settings $settings -Force
+```
+
+**规则：两种只用一种。** 同时开会启动两个实例，第二个注册热键会失败。
+
+注意启动项里是**绝对路径**，移动了安装目录要重写一次。
+
+### 4. 验证（必须做完再交付）
 
 ```powershell
 # a) 进程在跑
 Get-Process msimdict-app -ErrorAction SilentlyContinue
 
-# b) 看日志确认取词与热键都就绪
-Get-Content "$env:LOCALAPPDATA\MsImeDict\app.log" -Tail 10
-# 期望看到：keyboard hook started=True / hotkey register ok=[...] / mouse hook started=True
+# b) 日志里三个关键行都在
+Get-Content "$env:LOCALAPPDATA\MsImeDict\app.log" -Tail 15 -Encoding UTF8
+# 期望看到：
+#   keyboard hook started=True
+#   hotkey register ok=[Ctrl+Q,...]
+#   mouse hook started=True
 
-# c) 写入一条测试词并验证文件结构
-tools\msimdict.cmd add 测试词条 --code csz
-tools\msimdict.cmd verify
+# c) 写入一条测试词，并验证文件结构
+& "$dir\msimdict.exe" add 测试词条 --code csz
+& "$dir\msimdict.exe" verify
 # 期望：体检结果：全部通过
+
+# d) 确认真的进了输入法文件
+& "$dir\msimdict.exe" dump | Select-String csz
+
+# e) 清理测试数据
+& "$dir\msimdict.exe" remove <上一步 dump 里的 id>
 ```
 
-### 开机自启
+想验证真实输入效果，需要人类配合：在任意输入框打 `csz`，候选里应出现「测试词条」。
 
-**方式一：界面勾选（推荐给人类）**
-
-托盘右键 →「设置…」→ 勾选「开机自动启动」→ 保存。立即生效，写的是当前用户的启动项。
-
-**方式二：命令行（给 agent）**
+### 5. 静默命令（不需要界面）
 
 ```powershell
-# 开启：写入当前用户的 Run 键，不需要管理员权限
-$exe = "$env:LOCALAPPDATA\Programs\MsImeAssistant\msimdict-app.exe"
-New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
-  -Name 'MsImeAssistant' -Value "`"$exe`"" -PropertyType String -Force
-
-# 确认已写入
-Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant
-
-# 关闭：删掉这个值即可
-Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant -ErrorAction SilentlyContinue
+& "$dir\msimdict.exe" add "要加的词" --rank 2   # 加词 + 生成编码 + 写入输入法
+& "$dir\msimdict.exe" add "词" --code zdy --rank 1   # 指定编码，跳过自动生成
+& "$dir\msimdict.exe" list                      # 母库全部词条（含 id）
+& "$dir\msimdict.exe" dump                      # 输入法当前的自定义短语
+& "$dir\msimdict.exe" verify                    # 结构体检
+& "$dir\msimdict.exe" encode 某个词             # 只看会生成哪些编码
+& "$dir\msimdict.exe" sync                      # 同步到私有仓库
+& "$dir\msimdict.exe" deploy                    # 把母库重新投影进输入法
+& "$dir\msimdict.exe" backup                    # 备份当前短语文件
+& "$dir\msimdict.exe" rollback                  # 回滚到最近一次备份
+& "$dir\msimdict.exe" clean                     # 删除短语文件（回到初始状态）
 ```
 
-**注意事项**
+### 6. 必须知道的坑
 
-- 用的是 `HKCU` 而不是 `HKLM`，**不要用管理员权限**，也不需要。
-- 启动项里存的是 exe 的**绝对路径**。移动了安装目录要重新写一次，否则开机启动会指向不存在的文件。
-- 程序在启动时如果发现路径已经失效（比如已经被移动），不会自愈，需要重新勾选一次。
-- 想验证是否生效，不用等重启：注销再登录一次即可，或者直接看
-  `HKCU:\Software\Microsoft\Windows\CurrentVersion\Run` 里有没有 `MsImeAssistant`。
+1. **写入前一定先备份。** 目标文件是微软拼音的私有二进制格式，
+   写坏了会让「添加或编辑自定义短语」设置页卡死。恢复办法就是删掉
+   `%APPDATA%\Microsoft\InputMethod\Chs\ChsPinyinEUDPv1.lex`。
+2. **不要试图结束 `ChsIME.exe` 或 `ctfmon.exe`。** 系统保护进程，`taskkill`
+   会被拒绝访问（实测 100% 失败），别浪费时间。
+3. **不要写完就断言失败。** 输入法自己决定何时刷新短语表，通常几秒生效。
+   如果没出现，让人类在别的输入框打一个字再试。
+4. **`Ctrl+Q` 是独占的。** 注册成功后，其他程序的 `Ctrl+Q` 全部失效。
+   这是 `RegisterHotKey` 的机制，不是 bug。
+5. **`tools\*.ps1` 是 UTF-8 带 BOM。** 编辑后确认 BOM 还在，
+   否则 PowerShell 5.1 按 ANSI 读会乱码报语法错。
+6. **`*.cmd` 是 GBK 编码。** `cmd.exe` 按 OEM 代码页读脚本，改成 UTF-8 中文会碎。
+7. **不要阻塞 UI 线程。** 本程序挂着鼠标/键盘低级钩子，钩子回调被拖慢会让
+   **整个系统的输入卡住**。所有网络、磁盘操作都必须在后台线程。
+   （这条是踩过的坑：同步曾在 UI 线程同步执行，导致全系统鼠标卡顿。）
 
-### 计划任务方式（需要更高可靠性时）
+### 7. 故障排查
 
-如果希望"登录后延迟启动、失败自动重试"，用计划任务比 Run 键更稳：
+| 现象 | 先看这里 |
+|---|---|
+| 按热键没反应 | `app.log` 里有没有 `keyboard hook fired`；`hotkey register ok=[...]` 是否为空 |
+| 加词了但打不出来 | `dump` 里有没有该编码；有则等几秒或换个输入框 |
+| 提示「剪贴板里没有文字」 | 用户没按 `Ctrl+C`，或复制的是图片/文件 |
+| 词库删了但输入法还在 | 跑一次 `deploy`（母库是真相层，会整体重写） |
+| 同步失败 | `app.log` 里 `sync failed:` 后面的内容；常见是凭据没缓存 |
+| 鼠标偶尔卡顿 | 检查是否有长时间同步在 UI 线程跑（本版本已改为后台） |
 
-```powershell
-$exe = "$env:LOCALAPPDATA\Programs\MsImeAssistant\msimdict-app.exe"
-$action  = New-ScheduledTaskAction -Execute $exe
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'MsImeAssistant' -Action $action -Trigger $trigger -Settings $settings -Force
+日志：`%LOCALAPPDATA%\MsImeDict\app.log`
+母库：`%LOCALAPPDATA%\MsImeDict\phrases.db`
+备份：`%LOCALAPPDATA%\MsImeDict\backups\`
+配置：`%APPDATA%\MsImeDict\settings.json`
 
-# 取消
-Unregister-ScheduledTask -TaskName 'MsImeAssistant' -Confirm:$false
-```
-
-两种方式**只用一种**，同时开会启动两个实例、注册两次热键（后一个会失败）。
-
-### 必须注意的坑
-
-1. **写入前一定要备份。** 目标文件是微软拼音的私有格式，写坏了会让"添加或编辑自定义短语"
-   设置页卡死。恢复办法是删掉 `ChsPinyinEUDPv1.lex`。
-2. **不要试图结束 `ChsIME.exe` 或 `ctfmon.exe`。** 它们是系统保护进程，`taskkill` 会被拒绝访问。
-3. **不要在写入后立刻断言失败。** 输入法自己决定何时刷新短语表，通常几秒内生效。
-4. **`tools\` 下的 `.ps1` 文件是 UTF-8 带 BOM。** 用编辑器改过之后要确认 BOM 还在，
-   否则 PowerShell 5.1 按 ANSI 读会乱码。
-5. **`.cmd` 文件是 GBK 编码。** `cmd.exe` 按 OEM 代码页读脚本，改成 UTF-8 中文会变乱码。
-6. **默认热键 `Ctrl+Q` 是系统级独占。** 它注册后，任何程序里的 `Ctrl+Q` 都会被本工具接管。
-   如果目标环境冲突严重，先在设置里改成组合键（如 `Ctrl+Alt+J`）。
-
-### 静默操作（无界面）
-
-```powershell
-tools\msimdict.cmd add "要加的词" --rank 2   # 加词并写入输入法
-tools\msimdict.cmd list                      # 列出母库
-tools\msimdict.cmd dump                      # 列出输入法里当前的自定义短语
-tools\msimdict.cmd verify                    # 结构体检
-tools\msimdict.cmd sync                      # 同步到私有仓库
-tools\msimdict.cmd clean                     # 删除自定义短语文件（回到初始状态）
-tools\msimdict.cmd rollback                  # 回滚到最近一次备份
-```
-
-### 卸载
+### 8. 卸载
 
 ```powershell
 Stop-Process -Name msimdict-app -ErrorAction SilentlyContinue
-tools\msimdict.cmd clean                    # 删掉写入输入法的短语文件
-Remove-Item "$env:LOCALAPPDATA\MsImeDict" -Recurse -Force      # 母库与日志
-Remove-Item "$env:LOCALAPPDATA\Programs\MsImeAssistant" -Recurse -Force
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant -ErrorAction SilentlyContinue
+& "$dir\msimdict.exe" clean          # 删掉写进输入法的短语文件
+Remove-Item "$env:LOCALAPPDATA\MsImeDict" -Recurse -Force
+Remove-Item $dir -Recurse -Force
 ```
 
-词库数据在私有仓库里，卸载不会丢；换机器重新配置仓库地址即可拉回。
-
----
+词库数据在私有仓库里，卸载不会丢。换机器重新填仓库地址就能拉回来。
 
 ## 作者
 

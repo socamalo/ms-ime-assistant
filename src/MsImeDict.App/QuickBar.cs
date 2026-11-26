@@ -14,10 +14,12 @@ public sealed class QuickBar : Form
 
     private readonly Label _preview;
     private readonly Button _add;
+    private readonly System.Windows.Forms.Timer _lifeTimer;
 
     public event Action<string>? AddRequested;
 
     private string _text = "";
+    private DateTime _shownAt;
 
     public QuickBar()
     {
@@ -69,6 +71,16 @@ public sealed class QuickBar : Form
         Controls.Add(flow);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+        // 浮条自己管生命周期：鼠标不悬停就 4 秒后自动消失。
+        // 不靠全局鼠标钩子来关它——钩子回调必须极快，不能做界面判断。
+        _lifeTimer = new System.Windows.Forms.Timer { Interval = 250 };
+        _lifeTimer.Tick += (_, _) =>
+        {
+            if (!Visible) { _lifeTimer.Stop(); return; }
+            if (Bounds.Contains(Cursor.Position)) { _shownAt = DateTime.UtcNow; return; }
+            if ((DateTime.UtcNow - _shownAt).TotalSeconds > 4) { Hide(); _lifeTimer.Stop(); }
+        };
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -96,8 +108,10 @@ public sealed class QuickBar : Form
         if (y + Height > screen.Bottom) y = Math.Max(screen.Top, anchor.Y - Height - 12);
         Location = new Point(x, y);
 
+        _shownAt = DateTime.UtcNow;
         if (!Visible) Show();
         else Location = new Point(x, y);
+        _lifeTimer.Start();
     }
 
     private static string Shorten(string s)
@@ -108,6 +122,7 @@ public sealed class QuickBar : Form
 
     public void HideBar()
     {
+        _lifeTimer.Stop();
         if (Visible) Hide();
     }
 }

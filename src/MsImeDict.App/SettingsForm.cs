@@ -114,7 +114,7 @@ public sealed class SettingsForm : Form
         {
             Text = settings.RemoteUrl,
             Dock = DockStyle.Fill,
-            PlaceholderText = "https://github.com/用户名/仓库名.git"
+            PlaceholderText = "https://github.com/用户名/仓库名"
         };
         layout.Controls.Add(_remoteUrl, 1, 4);
         layout.Controls.Add(MakeHint("贴一个空的私有仓库地址。首次同步会自己初始化、推送，之后双向合并。"), 1, 5);
@@ -244,10 +244,11 @@ public sealed class SettingsForm : Form
             return false;
         }
 
-        var url = _remoteUrl.Text.Trim();
-        if (_syncEnabled.Checked && url.Length > 0 && !LooksLikeRepoUrl(url))
+        var url = RepoUrl.Normalize(_remoteUrl.Text);
+        if (_syncEnabled.Checked && url.Length > 0 && !RepoUrl.LooksValid(url))
         {
-            MessageBox.Show(this, "仓库地址看起来不对。示例：https://github.com/用户名/仓库名.git",
+            MessageBox.Show(this,
+                "仓库地址看起来不对。可以贴仓库网页地址（不带 .git 也行），例如：\nhttps://github.com/用户名/仓库名",
                 "地址无效", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             _remoteUrl.Focus();
             return false;
