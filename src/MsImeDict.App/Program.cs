@@ -121,9 +121,9 @@ public sealed class TrayHost
     {
         if (IsOwnWindow()) return;
 
-        // 等目标应用把选区落到 UI Automation 上
+        // 等目标应用把选区落到 UI Automation 上；UIA 在部分窗口会卡住，超时收紧
         System.Threading.Thread.Sleep(160);
-        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
+        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: false), 900);
         if (string.IsNullOrWhiteSpace(text)) return;
 
         text = text.Trim();
@@ -141,7 +141,7 @@ public sealed class TrayHost
     {
         if (IsOwnWindow()) return;
         System.Threading.Thread.Sleep(120);
-        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
+        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: false), 900);
         if (string.IsNullOrWhiteSpace(text)) return;
         Post(() => ShowMoreMenu(text.Trim(), at));
     }
@@ -198,17 +198,23 @@ public sealed class TrayHost
 
     private void CaptureSelection()
     {
-        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
-        Log.Write("capture: length=" + (text?.Length ?? -1));
+        // 热键路径：优先读剪贴板（先 Ctrl+C 再按热键），剪贴板没字才看 UIA 选区
+        var text = StaRunner.Run(() => SelectionReader.Read(preferClipboard: true), 2500);
+        Log.Write($"capture: length={text?.Length ?? -1} source={SelectionReader.LastSource}");
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            Notify("没有选中文字", "先在目标窗口里选中文字，再按热键", ToolTipIcon.Info);
+            Notify("没有可加入的内容",
+                "先选中文字按 Ctrl+C 复制，再按热键；或者直接在输入法里选中文字后按热键",
+                ToolTipIcon.Info);
             return;
         }
 
-        // 热键是「一步到位」：读到什么就直接加入，不弹对话框
-        AddPhrase(text.Trim(), openDialog: false);
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0) return;
+
+        // 一步到位：读到什么就直接加入，不弹对话框
+        AddPhrase(trimmed, openDialog: false);
     }
 
     // ---------- 加词 ----------
@@ -218,6 +224,16 @@ public sealed class TrayHost
         try
         {
             _store ??= new PhraseStore();
+
+            // 同一个词重复按热键不应重复入库
+            var existingWord = _store.FindByText(text);
+            if (existingWord is not null && openDialog == false)
+            {
+                Log.Write($"skip duplicate: {text}");
+                Post(() => _toast.ShowToast($"「{Shorten(text)}」已在词典中"));
+                return;
+            }
+
             var encoded = new PinyinEncoder().Encode(text);
             var info = new EncodedInfo
             {

@@ -20,20 +20,52 @@ public static class SelectionReader
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
+    /// <summary>上一次取词的来源：uia / clipboard / none。用于给用户提示。</summary>
+    public static string LastSource { get; private set; } = "none";
+
     /// <summary>
-    /// 读当前选区。
+    /// 读当前内容。全部是只读操作，绝不写剪贴板。
     ///
-    /// 两条路径，都不写剪贴板：
-    ///   1 UI Automation 直接读选区
-    ///   2 读不到就**只读**剪贴板里的文字——用户自己按 Ctrl+C 复制过，我们就取他复制的
-    ///
-    /// 绝不发 Ctrl+C、绝不 SetText/SetDataObject。Electron 等自绘界面靠第 2 条兜底。
+    /// preferClipboard = true（热键路径）：
+    ///     先读剪贴板 —— 对应「先 Ctrl+C 复制，再按热键」的用法，最确定。
+    ///     剪贴板没有文字时才退回 UI Automation。
+    /// preferClipboard = false（浮条路径）：
+    ///     先读 UIA 选区 —— 用户只是选中文字，没有复制，剪贴板里可能是别的东西。
     /// </summary>
-    public static string? Read()
+    public static string? Read(bool preferClipboard = false)
+    {
+        return preferClipboard ? ReadClipboardFirst() : ReadUiaFirst();
+    }
+
+    private static string? ReadClipboardFirst()
+    {
+        var fromClipboard = ReadClipboardText();
+        if (!string.IsNullOrWhiteSpace(fromClipboard))
+        {
+            LastSource = "clipboard";
+            Log.Write($"capture: clipboard hit len={fromClipboard.Length}");
+            return fromClipboard;
+        }
+
+        var text = ReadViaUia();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            LastSource = "uia";
+            Log.Write($"capture: uia hit len={text.Length}");
+            return text;
+        }
+
+        LastSource = "none";
+        Log.Write("capture: miss (clipboard has no text, uia empty)");
+        return null;
+    }
+
+    private static string? ReadUiaFirst()
     {
         var text = ReadViaUia();
         if (!string.IsNullOrWhiteSpace(text))
         {
+            LastSource = "uia";
             Log.Write($"capture: uia hit len={text.Length}");
             return text;
         }
@@ -41,10 +73,12 @@ public static class SelectionReader
         var fromClipboard = ReadClipboardText();
         if (!string.IsNullOrWhiteSpace(fromClipboard))
         {
-            Log.Write($"capture: clipboard-read hit len={fromClipboard.Length}");
+            LastSource = "clipboard";
+            Log.Write($"capture: clipboard hit len={fromClipboard.Length}");
             return fromClipboard;
         }
 
+        LastSource = "none";
         Log.Write("capture: miss (uia empty, clipboard has no text)");
         return null;
     }
