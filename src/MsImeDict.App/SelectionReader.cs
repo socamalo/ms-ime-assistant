@@ -34,7 +34,7 @@ public static class SelectionReader
 
     private static string? ReadViaUia()
     {
-        // 1) 从焦点元素往上找 TextPattern
+        // 1) 焦点元素与其祖先链（最快，覆盖记事本/Word/资源管理器）
         var fromFocus = ReadFrom(GetFocusedElement());
         if (!string.IsNullOrWhiteSpace(fromFocus))
         {
@@ -42,16 +42,74 @@ public static class SelectionReader
             return fromFocus;
         }
 
-        // 2) 从窗口根节点全树找 TextPattern
-        //    Electron / Chromium 的选区挂在 Document 元素上，不在焦点元素本身，
-        //    只往上走找不到，必须从窗口根往下扫。
-        var fromWindow = ReadFrom(GetForegroundRoot());
-        if (!string.IsNullOrWhiteSpace(fromWindow))
+        // 2) 窗口根节点 -> Document/Edit（Chromium/Electron 的选区挂在 Document 上）
+        //    先激活 Chromium 的无障碍树，否则页面内容在 UIA 里根本不存在
+        var fg = GetForegroundWindow();
+        var activated = ChromiumAccessibility.Activate(fg);
+        if (activated)
         {
-            Log.Write("capture: uia path=window-scan");
-            return fromWindow;
+            Log.Write("capture: chromium accessibility activated");
+            System.Threading.Thread.Sleep(120);
         }
 
+        var root = GetForegroundRoot();
+        var fromDocument = ReadFromDocument(root);
+        if (!string.IsNullOrWhiteSpace(fromDocument))
+        {
+            Log.Write("capture: uia path=document");
+            return fromDocument;
+        }
+
+        // 3) 有界全树扫描（最后手段，限时 600ms，避免动辄超时）
+        var fromScan = ScanBounded(root, TimeSpan.FromMilliseconds(600));
+        if (!string.IsNullOrWhiteSpace(fromScan))
+        {
+            Log.Write("capture: uia path=scan");
+            return fromScan;
+        }
+
+        return null;
+    }
+
+    /// <summary>直接找 Document / Edit / Text 容器，比全树扫描快一个数量级。</summary>
+    private static string? ReadFromDocument(AutomationElement? root)
+    {
+        if (root is null) return null;
+        foreach (var type in new[]
+                 {
+                     ControlType.Document, ControlType.Edit, ControlType.Text, ControlType.Pane, ControlType.Group
+                 })
+        {
+            try
+            {
+                var cond = new PropertyCondition(AutomationElement.ControlTypeProperty, type);
+                var found = root.FindFirst(TreeScope.Descendants, cond);
+                if (found is null) continue;
+                var text = ReadSelection(found);
+                if (text is not null) return text;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static string? ScanBounded(AutomationElement? root, TimeSpan budget)
+    {
+        if (root is null) return null;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var cond = new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty, true);
+            var all = root.FindAll(TreeScope.Descendants, cond);
+            var limit = Math.Min(all.Count, 300);
+            for (var i = 0; i < limit; i++)
+            {
+                if (sw.Elapsed > budget) break;
+                var text = ReadSelection(all[i]);
+                if (text is not null) return text;
+            }
+        }
+        catch { }
         return null;
     }
 
