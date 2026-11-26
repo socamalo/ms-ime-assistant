@@ -11,8 +11,18 @@ namespace MsImeDict.Core;
 /// </summary>
 public sealed class PinyinEncoder
 {
-    /// <summary>多音字组合数上限，超过就只取首选读音，避免组合爆炸。</summary>
-    public const int MaxReadingCombos = 16;
+    /// <summary>
+    /// 每个字取几个读音参与组合。
+    ///
+    /// 取 1（首选读音）的原因：多音字的次常用读音会生成没人会打的编码，
+    /// 例如「已」的 sì 会产出 sijing...，「大」的 tài 会产出 tainao...，
+    /// 结果是同一个词在输入法里挂三四条无用编码，还可能撞掉别人的码。
+    /// 需要别的读音时，在词库管理界面手工加一条指定编码即可。
+    /// </summary>
+    public const int MaxReadingsPerChar = 1;
+
+    /// <summary>组合数上限，防止长词 + 多读音时爆炸。</summary>
+    public const int MaxCombinations = 8;
 
     /// <summary>一个词条最多产出多少个编码。</summary>
     public const int MaxCodes = 6;
@@ -167,17 +177,16 @@ public sealed class PinyinEncoder
         foreach (var readings in readingsPerPart)
         {
             if (readings.Length == 0) continue;
+
+            var allowed = readings.Take(MaxReadingsPerChar).ToArray();
             var next = new List<string[]>();
             foreach (var c in combos)
-                foreach (var r in readings)
+                foreach (var r in allowed)
                     next.Add(c.Concat(new[] { r }).ToArray());
+
             combos = next;
-            if (combos.Count > MaxReadingCombos)
-            {
-                // 组合爆炸时收敛到首选读音
-                combos = combos.Take(MaxReadingCombos).ToList();
-                break;
-            }
+            if (combos.Count > MaxCombinations)
+                combos = combos.Take(MaxCombinations).ToList();
         }
         return combos;
     }

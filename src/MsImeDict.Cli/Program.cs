@@ -303,6 +303,18 @@ public static class Program
         foreach (var step in result.Steps) Console.WriteLine("  - " + step);
         if (result.Pushed > 0 || result.Pulled > 0)
             Console.WriteLine($"  上传 {result.Pushed} 个变更文件，下载 {result.Pulled} 个");
+
+        // 拉回来的词条要重新投影进输入法
+        if (result.Ok && result.Pulled > 0)
+        {
+            var deploy = new ImeDeployer().Deploy(store.Project());
+            Console.WriteLine(deploy.Ok
+                ? $"  已把 {deploy.EntryCount} 条写入输入法"
+                : $"  写入输入法失败：{deploy.Message}");
+            foreach (var p in deploy.Problems) Console.WriteLine("    - " + p);
+            if (!deploy.Ok) return 1;
+        }
+
         return result.Ok ? 0 : 1;
     }
 

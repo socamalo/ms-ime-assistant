@@ -10,6 +10,7 @@ public sealed class DeployResult
     public string Message { get; set; } = "";
     public int EntryCount { get; set; }
     public int AddedCount { get; set; }
+    public int RemovedCount { get; set; }
     public int KeptCount { get; set; }
     public string? BackupPath { get; set; }
     public List<string> Problems { get; set; } = new();
@@ -32,6 +33,14 @@ public sealed class ImeDeployer
 
     public string LexPath { get; init; } = Paths.LexFile;
 
+    /// <summary>
+    /// 是否保留输入法里已有、但母库没有的条目。
+    ///
+    /// 默认 false：母库是真相层，lex 是它的投影。
+    /// 保留外来条目会导致「从词库删除后，输入法里还在」——实测踩过。
+    /// </summary>
+    public bool KeepForeignEntries { get; init; }
+
     /// <summary>只读部署：算出将要写入的内容但不落盘。</summary>
     public (List<PhraseEntry> Entries, DeployResult Result) Preview(IEnumerable<PhraseEntry> fromStore)
     {
@@ -42,10 +51,13 @@ public sealed class ImeDeployer
         var store = fromStore.ToList();
         var storeCodes = store.Select(e => e.Code).ToHashSet(StringComparer.Ordinal);
 
-        // 同一编码只能有一条：母库优先，其次保留原有的
+        // 同一编码只能有一条：母库优先，其次（可选的）保留原有
         var byCode = new Dictionary<string, PhraseEntry>(StringComparer.Ordinal);
-        foreach (var e in existing) byCode[e.Code] = e;
+        if (KeepForeignEntries)
+            foreach (var e in existing) byCode[e.Code] = e;
         foreach (var e in store) byCode[e.Code] = e;
+
+        result.RemovedCount = existing.Count(e => !storeCodes.Contains(e.Code));
 
         var final = new List<PhraseEntry>();
         foreach (var e in byCode.Values.OrderBy(x => x.Code, StringComparer.Ordinal))

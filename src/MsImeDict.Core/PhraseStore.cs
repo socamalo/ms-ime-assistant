@@ -113,9 +113,14 @@ CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
 
     // ---------- 写 ----------
 
-    /// <summary>新增词条并落日志。返回落库的词条。</summary>
+    /// <summary>新增词条并落日志。已存在同 (词条, 编码) 时直接返回既有条目。</summary>
     public Phrase Add(string text, string code, int rank = 2, string source = "manual", bool enabled = true)
     {
+        var duplicate = List().FirstOrDefault(p =>
+            string.Equals(p.Text, text, StringComparison.Ordinal) &&
+            string.Equals(p.Code, code, StringComparison.Ordinal));
+        if (duplicate is not null) return duplicate;
+
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var phrase = new Phrase
         {
@@ -276,8 +281,27 @@ ON CONFLICT(id) DO UPDATE SET
         return outp;
     }
 
-    public static string NewId() => Guid.NewGuid().ToString("N")[..16];
+    /// <summary>
+    /// 清理重复条目：同一 (词条, 编码) 只保留最早的一条。
+    /// 返回删掉的条数。
+    /// </summary>
+    public int RemoveDuplicates()
+    {
+        var groups = List().GroupBy(p => (p.Text, p.Code))
+                           .Where(g => g.Count() > 1)
+                           .ToList();
+        var removed = 0;
+        foreach (var g in groups)
+        {
+            foreach (var extra in g.OrderBy(p => p.CreatedAt).Skip(1))
+            {
+                if (Remove(extra.Id)) removed++;
+            }
+        }
+        return removed;
+    }
 
+    public static string NewId() => Guid.NewGuid().ToString("N")[..16];
     public void Dispose()
     {
         _conn.Dispose();

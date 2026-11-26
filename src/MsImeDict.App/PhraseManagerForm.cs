@@ -44,6 +44,7 @@ public sealed class PhraseManagerForm : Form
         };
         toolbar.Controls.Add(MakeButton("新增词条", (_, _) => AddPhrase()));
         toolbar.Controls.Add(MakeButton("删除所选", (_, _) => DeleteSelected()));
+        toolbar.Controls.Add(MakeButton("去重", (_, _) => Deduplicate()));
         toolbar.Controls.Add(MakeButton("刷新", (_, _) => Reload()));
 
         _status = new Label
@@ -115,6 +116,22 @@ public sealed class PhraseManagerForm : Form
         Reload();
         if (!result.Ok)
             MessageBox.Show(this, result.Message, "写入失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    private void Deduplicate()
+    {
+        var removed = _store.RemoveDuplicates();
+        if (removed == 0)
+        {
+            MessageBox.Show(this, "没有重复条目。", "去重", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var result = new ImeDeployer().Deploy(_store.Project());
+        Reload();
+        MessageBox.Show(this,
+            result.Ok ? $"已删除 {removed} 条重复条目，并重新写入输入法。" : $"已删除 {removed} 条，但写入输入法失败：{result.Message}",
+            "去重", MessageBoxButtons.OK, result.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Error);
     }
 
     private void DeleteSelected()

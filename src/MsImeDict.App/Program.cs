@@ -279,6 +279,22 @@ public sealed class TrayHost
                 RemoteUrl = _settings.RemoteUrl,
                 Branch = _settings.Branch
             });
+
+            // 从别的设备拉回来的词条要重新投影进输入法，否则只在母库里
+            if (result.Ok && result.Pulled > 0)
+            {
+                var deploy = new ImeDeployer().Deploy(_store.Project());
+                if (!deploy.Ok)
+                {
+                    Notify("同步成功，但写入输入法失败", deploy.Message, ToolTipIcon.Error);
+                    return;
+                }
+                Log.Write($"sync: pulled={result.Pulled}, deployed={deploy.EntryCount}");
+                Notify("同步完成", $"拉取 {result.Pulled} 条，已写入输入法（共 {deploy.EntryCount} 条）",
+                    ToolTipIcon.Info);
+                return;
+            }
+
             Notify(result.Ok ? "同步完成" : "同步失败", result.Message,
                 result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error);
         }
@@ -301,7 +317,17 @@ public sealed class TrayHost
                     RemoteUrl = _settings.RemoteUrl,
                     Branch = _settings.Branch
                 });
-                Log.Write($"background sync: ok={result.Ok} pushed={result.Pushed} pulled={result.Pulled} {result.Message}");
+
+                if (result.Ok && result.Pulled > 0)
+                {
+                    var deploy = new ImeDeployer().Deploy(_store.Project());
+                    Log.Write($"background sync: pulled={result.Pulled}, deploy ok={deploy.Ok} entries={deploy.EntryCount}");
+                    Post(() => _toast.ShowToast($"已同步 {result.Pulled} 条并写入输入法"));
+                }
+                else
+                {
+                    Log.Write($"background sync: ok={result.Ok} pushed={result.Pushed} pulled={result.Pulled} {result.Message}");
+                }
             }
             catch (Exception ex) { Log.Write("background sync failed: " + ex.Message); }
             finally { Interlocked.Exchange(ref _syncing, 0); }
