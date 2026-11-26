@@ -6,12 +6,16 @@ namespace MsImeDict.Core;
 /// <summary>同步设置。</summary>
 public sealed class SyncSettings
 {
-    /// <summary>私有仓库的本地克隆目录。</summary>
+    /// <summary>私有仓库的本地工作副本目录。</summary>
     public string RepoPath { get; set; } = "";
     /// <summary>私有仓库远端地址（git URL）。</summary>
     public string RemoteUrl { get; set; } = "";
     public string Branch { get; set; } = "main";
     public bool Enabled { get; set; }
+
+    public string EffectiveRepoPath => string.IsNullOrWhiteSpace(RepoPath)
+        ? Path.Combine(Paths.AppDataDir, "sync-repo")
+        : RepoPath;
 }
 
 /// <summary>同步结果。</summary>
@@ -42,39 +46,36 @@ public sealed class SyncAgent
     public SyncResult Sync(SyncSettings settings)
     {
         var result = new SyncResult { Ok = true };
-        if (!settings.Enabled || string.IsNullOrWhiteSpace(settings.RepoPath))
+        if (!settings.Enabled)
         {
             result.Ok = false;
-            result.Message = "同步未启用或未配置仓库路径";
+            result.Message = "同步未启用";
             return result;
         }
 
-        var repo = settings.RepoPath;
-        Directory.CreateDirectory(repo);
-
-        // 1) 初始化仓库
-        if (!Directory.Exists(Path.Combine(repo, ".git")))
+        var repo = settings.EffectiveRepoPath;
+        if (string.IsNullOrWhiteSpace(settings.RemoteUrl))
         {
-            Run(repo, "git init");
-            Run(repo, $"git checkout -b {settings.Branch}", ignoreError: true);
-            Run(repo, "git config user.name \"ms-ime-dict\"");
-            Run(repo, "git config user.email \"ms-ime-dict@localhost\"");
-            result.Steps.Add("初始化仓库");
+            result.Ok = false;
+            result.Message = "没有填写私有仓库地址";
+            return result;
         }
-        if (!string.IsNullOrWhiteSpace(settings.RemoteUrl))
-            Run(repo, $"git remote add origin \"{settings.RemoteUrl}\"", ignoreError: true);
-        else
-            Run(repo, "git remote add origin \"https://github.com/CHANGE-ME/private.git\"", ignoreError: true);
 
-        // 2) 本地变更 -> 仓库
+        if (!EnsureRepo(repo, settings.RemoteUrl, settings.Branch, result))
+        {
+            result.Ok = false;
+            result.Message = "无法准备本地工作副本";
+            return result;
+        }
+
+        // 1) 本地变更 -> 仓库
         var repoChanges = Path.Combine(repo, "changes");
         Directory.CreateDirectory(repoChanges);
         int pushed = 0;
         foreach (var file in Directory.EnumerateFiles(Paths.ChangeDir, "*.json"))
         {
             var target = Path.Combine(repoChanges, Path.GetFileName(file));
-            if (!File.Exists(target) ||
-                !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))
+            if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))
             {
                 File.Copy(file, target, overwrite: true);
                 pushed++;
@@ -83,15 +84,12 @@ public sealed class SyncAgent
         result.Pushed = pushed;
         result.Steps.Add($"本地变更上传 {pushed} 个文件");
 
-        // 3) 提交
+        // 2) 提交
         Run(repo, "git add -A");
         var commit = Run(repo, "git commit -m \"sync: 更新个人词库\"", ignoreError: true);
-        if (commit.Contains("nothing to commit"))
-            result.Steps.Add("无新变更");
-        else
-            result.Steps.Add("已提交");
+        result.Steps.Add(commit.Contains("nothing to commit") ? "无新变更" : "已提交本地变更");
 
-        // 4) 拉取。远端还没有这个分支时（首次推送）跳过。
+        // 3) 拉取。远端还没有这个分支时（首次推送）跳过。
         var remoteHasBranch = Run(repo, $"git ls-remote --heads origin {settings.Branch}", ignoreError: true)
             .Contains($"refs/heads/{settings.Branch}", StringComparison.Ordinal);
 
@@ -112,7 +110,7 @@ public sealed class SyncAgent
             result.Steps.Add("已拉取远端");
         }
 
-        // 5) 远端变更 -> 本地，并重放到母库
+        // 4) 远端变更 -> 本地，并重放到母库
         int pulled = 0;
         foreach (var file in Directory.EnumerateFiles(repoChanges, "*.json"))
         {
@@ -129,18 +127,65 @@ public sealed class SyncAgent
         foreach (var rec in PhraseStore.ReadLog()) _store.ApplyChange(rec);
         result.Steps.Add("已重放到母库");
 
-        // 6) 推送
+        // 5) 推送
         var push = Run(repo, $"git push origin {settings.Branch}", ignoreError: true);
-        if (push.Contains("fatal:") || push.Contains("rejected"))
+        if (push.Contains("fatal:") || push.Contains("rejected") || push.Contains("error:"))
         {
             result.Ok = false;
-            result.Message = $"推送失败：{push.Trim()}";
+            result.Message = $"推送失败：{FirstLine(push)}";
             return result;
         }
         result.Steps.Add("已推送");
 
-        result.Message = result.Ok ? "同步完成" : result.Message;
+        result.Message = "同步完成";
         return result;
+    }
+
+    /// <summary>
+    /// 准备本地工作副本：有远程就克隆，克隆不了就地初始化；
+    /// 已存在则只校正 origin 地址。返回是否可用。
+    /// </summary>
+    private static bool EnsureRepo(string repo, string remoteUrl, string branch, SyncResult result)
+    {
+        var gitDir = Path.Combine(repo, ".git");
+
+        if (!Directory.Exists(gitDir))
+        {
+            var existed = Directory.Exists(repo);
+            var empty = !existed || Directory.GetFileSystemEntries(repo).Length == 0;
+
+            if (empty)
+            {
+                var parent = Path.GetDirectoryName(repo.TrimEnd('\\', '/'));
+                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                Run(parent ?? repo, $"git clone \"{remoteUrl}\" \"{repo}\"", ignoreError: true);
+            }
+
+            if (!Directory.Exists(gitDir))
+            {
+                Directory.CreateDirectory(repo);
+                Run(repo, "git init");
+                Run(repo, $"git checkout -b {branch}", ignoreError: true);
+                result.Steps.Add("初始化本地工作副本");
+            }
+            else
+            {
+                result.Steps.Add("从远端克隆工作副本");
+            }
+
+            Run(repo, "git config user.name \"ms-ime-dict\"");
+            Run(repo, "git config user.email \"ms-ime-dict@localhost\"");
+        }
+
+        Run(repo, $"git remote add origin \"{remoteUrl}\"", ignoreError: true);
+        Run(repo, $"git remote set-url origin \"{remoteUrl}\"", ignoreError: true);
+        return Directory.Exists(gitDir);
+    }
+
+    private static string FirstLine(string text)
+    {
+        var line = text.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? text;
+        return line.Trim();
     }
 
     private static string Run(string workingDir, string command, bool ignoreError = false)

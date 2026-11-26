@@ -45,6 +45,7 @@ public sealed class HotkeyForm : Form
     /// <summary>依次尝试注册，返回成功与失败的组合。</summary>
     public (List<string> Ok, List<string> Failed) RegisterAll(IEnumerable<string> combos)
     {
+        UnregisterAll();
         var ok = new List<string>();
         var failed = new List<string>();
         foreach (var combo in combos)
@@ -62,6 +63,13 @@ public sealed class HotkeyForm : Form
             }
         }
         return (ok, failed);
+    }
+
+    /// <summary>注销全部已注册组合（改热键时先清空）。</summary>
+    public void UnregisterAll()
+    {
+        foreach (var id in _byId.Keys) UnregisterHotKey(Handle, id);
+        _byId.Clear();
     }
 
     protected override void WndProc(ref Message m)

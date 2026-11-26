@@ -62,7 +62,7 @@ public sealed class TrayHost
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("同步到私有仓库", null, (_, _) => SyncNow());
         menu.Items.Add("词库目录", null, (_, _) => OpenFolder(Paths.AppDataDir));
-        menu.Items.Add("设置", null, (_, _) => EditSettings());
+        menu.Items.Add("设置…", null, (_, _) => OpenSettings());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Shutdown());
         _tray.ContextMenuStrip = menu;
@@ -83,33 +83,18 @@ public sealed class TrayHost
         _hotkey.EnsureHandle();
         _hotkey.Triggered += combo => FireHotkey(combo);
 
-        var combos = new List<string> { _settings.Hotkey };
-        foreach (var extra in new[] { "Ctrl+Alt+F9", "Ctrl+Shift+D" })
-            if (!combos.Contains(extra, StringComparer.OrdinalIgnoreCase)) combos.Add(extra);
-
-        var (okList, failedList) = _hotkey.RegisterAll(combos);
-        Log.Write($"hotkey register ok=[{string.Join(",", okList)}] failed=[{string.Join(",", failedList)}]");
-        if (okList.Count == 0)
-            Notify("热键注册失败", "所有候选组合都被占用：" + string.Join(",", failedList), ToolTipIcon.Warning);
-
         // 第二条通道：低级键盘钩子自己认组合，绕开 RegisterHotKey 的消息投递
         _keyHook = new KeyboardHook();
-        if (HotkeyForm.TryParse(_settings.Hotkey, out var hotkeyMods, out var targetVk))
+        _keyHook.Triggered += () =>
         {
-            _keyHook.TargetVk = targetVk;
-            _keyHook.NeedCtrl = (hotkeyMods & 0x0002) != 0;
-            _keyHook.NeedAlt = (hotkeyMods & 0x0001) != 0;
-            _keyHook.NeedShift = (hotkeyMods & 0x0004) != 0;
-            _keyHook.NeedWin = (hotkeyMods & 0x0008) != 0;
-            var kbHookOk = _keyHook.Start();
-            _keyHook.Triggered += () =>
-            {
-                Log.Write($"keyboard hook fired ({_settings.Hotkey})");
-                _keyHook.Reset();
-                FireHotkey("hook");
-            };
-            Log.Write($"keyboard hook started={kbHookOk} targetVk=0x{targetVk:X}");
-        }
+            Log.Write($"keyboard hook fired ({_settings.Hotkey})");
+            _keyHook.Reset();
+            FireHotkey("hook");
+        };
+        var kbHookOk = _keyHook.Start();
+        Log.Write($"keyboard hook started={kbHookOk}");
+
+        RegisterHotkeys();
 
         _bar.AddRequested += text => AddPhrase(text, openDialog: false);
         _bar.MoreRequested += ShowMoreMenu;
@@ -349,14 +334,45 @@ public sealed class TrayHost
         catch (Exception ex) { Notify("同步出错", ex.Message, ToolTipIcon.Error); }
     }
 
-    private void EditSettings()
+    private void OpenSettings()
     {
         try
         {
-            if (!File.Exists(Paths.SettingsFile)) _settings.Save();
-            Process.Start("notepad.exe", Paths.SettingsFile);
+            using var form = new SettingsForm(_settings);
+            if (form.ShowDialog() != DialogResult.OK) return;
+            ApplyHotkeySettings();
+            if (form.SyncRequested) SyncNow();
+            else Notify("设置已保存", "快捷键：" + _settings.Hotkey, ToolTipIcon.Info);
         }
-        catch { }
+        catch (Exception ex) { Notify("保存设置失败", ex.Message, ToolTipIcon.Error); }
+    }
+
+    /// <summary>按当前设置注册热键。设置里改过热键后会重新调用。</summary>
+    private void RegisterHotkeys()
+    {
+        if (HotkeyForm.TryParse(_settings.Hotkey, out var mods, out var vk))
+        {
+            _keyHook!.TargetVk = vk;
+            _keyHook.NeedCtrl = (mods & 0x0002) != 0;
+            _keyHook.NeedAlt = (mods & 0x0001) != 0;
+            _keyHook.NeedShift = (mods & 0x0004) != 0;
+            _keyHook.NeedWin = (mods & 0x0008) != 0;
+        }
+
+        var combos = new List<string> { _settings.Hotkey };
+        foreach (var extra in new[] { "Ctrl+Alt+F9", "Ctrl+Shift+D" })
+            if (!combos.Contains(extra, StringComparer.OrdinalIgnoreCase)) combos.Add(extra);
+
+        var (okList, failedList) = _hotkey.RegisterAll(combos);
+        Log.Write($"hotkey register ok=[{string.Join(",", okList)}] failed=[{string.Join(",", failedList)}]");
+        if (okList.Count == 0)
+            Notify("热键注册失败", "这个组合被占用了：" + string.Join(",", failedList), ToolTipIcon.Warning);
+    }
+
+    /// <summary>设置里改了热键后重新注册。</summary>
+    private void ApplyHotkeySettings()
+    {
+        RegisterHotkeys();
     }
 
     private static void OpenFolder(string path)
