@@ -278,6 +278,7 @@ public sealed class TrayHost
             {
                 Log.Write($"added: {word} -> {string.Join(",", codes)}");
                 Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
+                if (_settings.SyncEnabled) SyncInBackground();
             }
             else
             {
@@ -332,6 +333,31 @@ public sealed class TrayHost
                 result.Ok ? ToolTipIcon.Info : ToolTipIcon.Error);
         }
         catch (Exception ex) { Notify("同步出错", ex.Message, ToolTipIcon.Error); }
+    }
+
+    private int _syncing;
+
+    /// <summary>后台同步：失败只写日志，不打扰用户；同一时刻只跑一个。</summary>
+    private void SyncInBackground()
+    {
+        if (Interlocked.CompareExchange(ref _syncing, 1, 0) != 0) return;
+        Task.Run(() =>
+        {
+            try
+            {
+                if (_store is null) return;
+                var result = new SyncAgent(_store).Sync(new Core.SyncSettings
+                {
+                    Enabled = _settings.SyncEnabled,
+                    RepoPath = _settings.RepoPath,
+                    RemoteUrl = _settings.RemoteUrl,
+                    Branch = _settings.Branch
+                });
+                Log.Write($"background sync: ok={result.Ok} pushed={result.Pushed} pulled={result.Pulled} {result.Message}");
+            }
+            catch (Exception ex) { Log.Write("background sync failed: " + ex.Message); }
+            finally { Interlocked.Exchange(ref _syncing, 0); }
+        });
     }
 
     private void OpenSettings()

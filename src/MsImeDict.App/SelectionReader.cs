@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 using System.Text;
 using System.Windows.Automation;
 
@@ -19,17 +20,53 @@ public static class SelectionReader
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
-    /// <summary>读当前选区。UIA 读不到返回 null，不做任何兜底动作。</summary>
+    /// <summary>
+    /// 读当前选区。
+    ///
+    /// 两条路径，都不写剪贴板：
+    ///   1 UI Automation 直接读选区
+    ///   2 读不到就**只读**剪贴板里的文字——用户自己按 Ctrl+C 复制过，我们就取他复制的
+    ///
+    /// 绝不发 Ctrl+C、绝不 SetText/SetDataObject。Electron 等自绘界面靠第 2 条兜底。
+    /// </summary>
     public static string? Read()
     {
         var text = ReadViaUia();
-        if (string.IsNullOrWhiteSpace(text))
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            Log.Write("capture: uia miss (clipboard is never touched)");
-            return null;
+            Log.Write($"capture: uia hit len={text.Length}");
+            return text;
         }
-        Log.Write($"capture: uia hit len={text.Length}");
-        return text;
+
+        var fromClipboard = ReadClipboardText();
+        if (!string.IsNullOrWhiteSpace(fromClipboard))
+        {
+            Log.Write($"capture: clipboard-read hit len={fromClipboard.Length}");
+            return fromClipboard;
+        }
+
+        Log.Write("capture: miss (uia empty, clipboard has no text)");
+        return null;
+    }
+
+    /// <summary>只读剪贴板里的文本，不做任何写入。</summary>
+    private static string? ReadClipboardText()
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!Clipboard.ContainsText()) return null;
+                var text = Clipboard.GetText();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                // 剪贴板正被别的进程占用，稍等重试
+                System.Threading.Thread.Sleep(60);
+            }
+        }
+        return null;
     }
 
     private static string? ReadViaUia()
