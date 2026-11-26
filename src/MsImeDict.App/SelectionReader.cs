@@ -7,27 +7,35 @@ namespace MsImeDict.App;
 /// <summary>
 /// 取词：UI Automation 优先，剪贴板兜底。
 ///
-/// 只在用户显式触发（热键 / 菜单）时才发 Ctrl+C，且会尽量还原剪贴板。
+/// 必须在 STA 线程上调用（剪贴板要求），见 StaRunner。
+/// 只在用户显式触发（拖选/热键/菜单）时才发 Ctrl+C，且会还原剪贴板。
 /// </summary>
 public static class SelectionReader
 {
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetFocus();
-    [DllImport("user32.dll")]
-    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
+
+    private const string Sentinel = "__MSIMDICT_CLIP_SENTINEL__";
 
     /// <summary>读当前选区。失败返回 null。</summary>
     public static string? Read()
     {
         var viaUia = ReadViaUia();
-        if (!string.IsNullOrWhiteSpace(viaUia)) return viaUia;
-        return ReadViaClipboard();
+        if (!string.IsNullOrWhiteSpace(viaUia))
+        {
+            Log.Write($"capture: uia hit len={viaUia.Length}");
+            return viaUia;
+        }
+
+        var viaClip = ReadViaClipboard();
+        if (!string.IsNullOrWhiteSpace(viaClip))
+        {
+            Log.Write($"capture: clipboard hit len={viaClip.Length}");
+            return viaClip;
+        }
+
+        Log.Write("capture: both paths empty");
+        return null;
     }
 
     private static string? ReadViaUia()
@@ -37,12 +45,11 @@ public static class SelectionReader
             var element = GetFocusedElement();
             if (element is null) return null;
 
-            // 密码框直接放弃
             try
             {
                 if (element.Current.IsPassword) return null;
             }
-            catch { /* 属性不可用就忽略 */ }
+            catch { /* 属性不可用时忽略 */ }
 
             for (var e = element; e is not null; e = WalkUp(e))
             {
@@ -74,7 +81,6 @@ public static class SelectionReader
         }
         catch { }
 
-        // 回退：前台窗口的焦点元素
         try
         {
             var fg = GetForegroundWindow();
@@ -86,43 +92,46 @@ public static class SelectionReader
 
     private static AutomationElement? WalkUp(AutomationElement e)
     {
-        try
-        {
-            var parent = TreeWalker.ControlViewWalker.GetParent(e);
-            return parent;
-        }
+        try { return TreeWalker.ControlViewWalker.GetParent(e); }
         catch { return null; }
     }
 
-    /// <summary>剪贴板兜底：保存 -> Ctrl+C -> 读 -> 还原。</summary>
+    /// <summary>剪贴板兜底：留哨兵 -> Ctrl+C -> 轮询等待变化 -> 读文本 -> 还原剪贴板。</summary>
     private static string? ReadViaClipboard()
     {
         IDataObject? saved = null;
         try { saved = Clipboard.GetDataObject(); } catch { }
 
-        var fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero) return null;
+        try { Clipboard.SetText(Sentinel); } catch { }
+
+        try { SendCtrlC(); }
+        catch { return null; }
 
         string? result = null;
-        try
+        for (var i = 0; i < 15; i++)
         {
-            SendCtrlC(fg);
-            System.Threading.Thread.Sleep(180);
-            var text = Clipboard.GetText();
-            if (!string.IsNullOrWhiteSpace(text)) result = text;
-        }
-        catch (Exception) { }
-        finally
-        {
-            if (saved is not null)
+            System.Threading.Thread.Sleep(60);
+            try
             {
-                try { Clipboard.SetDataObject(saved, true); } catch { }
+                if (!Clipboard.ContainsText()) continue;
+                var text = Clipboard.GetText();
+                if (!string.IsNullOrEmpty(text) && text != Sentinel)
+                {
+                    result = text;
+                    break;
+                }
             }
+            catch { /* 剪贴板被占用时重试 */ }
+        }
+
+        if (saved is not null)
+        {
+            try { Clipboard.SetDataObject(saved, true); } catch { }
         }
         return result;
     }
 
-    private static void SendCtrlC(IntPtr foreground)
+    private static void SendCtrlC()
     {
         const uint KEYEVENTF_KEYUP = 0x0002;
         const ushort VK_CONTROL = 0x11;
@@ -130,19 +139,18 @@ public static class SelectionReader
 
         var inputs = new[]
         {
-            NewInput(KEYEVENTF_KEYUP, 0, VK_CONTROL),
-            NewInput(0, 0, VK_CONTROL),
-            NewInput(0, 0, VK_C),
-            NewInput(KEYEVENTF_KEYUP, 0, VK_C),
-            NewInput(KEYEVENTF_KEYUP, 0, VK_CONTROL)
+            NewInput(0, VK_CONTROL),
+            NewInput(0, VK_C),
+            NewInput(KEYEVENTF_KEYUP, VK_C),
+            NewInput(KEYEVENTF_KEYUP, VK_CONTROL)
         };
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
-    private static INPUT NewInput(uint flags, uint scan, ushort vk) => new()
+    private static INPUT NewInput(uint flags, ushort vk) => new()
     {
         type = 1, // INPUT_KEYBOARD
-        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = (ushort)scan, dwFlags = flags } }
+        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = 0, dwFlags = flags } }
     };
 
     [StructLayout(LayoutKind.Sequential)]

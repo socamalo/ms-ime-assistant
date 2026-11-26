@@ -77,8 +77,14 @@ public sealed class TrayHost
         form.Hide();
         _ui = form;
 
-        _hotkey.Triggered += CaptureSelection;
-        if (!_hotkey.Register(_settings.Hotkey))
+        _hotkey.Triggered += () =>
+        {
+            Log.Write("hotkey fired");
+            CaptureSelection();
+        };
+        var hotkeyOk = _hotkey.Register(_settings.Hotkey);
+        Log.Write($"start: hotkey={_settings.Hotkey} registered={hotkeyOk}");
+        if (!hotkeyOk)
             Notify("热键注册失败", $"无法注册 {_settings.Hotkey}，可能被其他程序占用", ToolTipIcon.Warning);
 
         _bar.AddRequested += text => AddPhrase(text, openDialog: false);
@@ -90,7 +96,9 @@ public sealed class TrayHost
         {
             if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
         };
-        if (!_mouse.Start())
+        var hookOk = _mouse.Start();
+        Log.Write($"mouse hook started={hookOk}");
+        if (!hookOk)
             Notify("鼠标监听未启用", "选区浮条不可用，热键仍然有效", ToolTipIcon.Warning);
     }
 
@@ -102,7 +110,7 @@ public sealed class TrayHost
 
         // 等目标应用把选区落到 UI Automation 上
         System.Threading.Thread.Sleep(160);
-        var text = SelectionReader.Read();
+        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
         if (string.IsNullOrWhiteSpace(text)) return;
 
         text = text.Trim();
@@ -120,7 +128,7 @@ public sealed class TrayHost
     {
         if (IsOwnWindow()) return;
         System.Threading.Thread.Sleep(120);
-        var text = SelectionReader.Read();
+        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
         if (string.IsNullOrWhiteSpace(text)) return;
         Post(() => ShowMoreMenu(text.Trim(), at));
     }
@@ -148,10 +156,12 @@ public sealed class TrayHost
 
     private void CaptureSelection()
     {
-        var text = SelectionReader.Read();
+        var text = StaRunner.Run(() => SelectionReader.Read(), 2500);
+        Log.Write("capture: length=" + (text?.Length ?? -1));
         if (string.IsNullOrWhiteSpace(text))
         {
-            Notify("没取到选区", "请先在目标窗口里选中文字，再按热键（或右键托盘图标）", ToolTipIcon.Info);
+            // 取不到选区时也打开对话框，让用户直接粘贴或手输
+            AddPhrase("", openDialog: true);
             return;
         }
         AddPhrase(text.Trim(), openDialog: true);
@@ -173,13 +183,32 @@ public sealed class TrayHost
 
             List<string> codes;
             int rank;
+            var word = text;
 
             if (openDialog)
             {
                 using var form = new AddPhraseForm(text, info, _settings.DefaultRank);
                 if (form.ShowDialog() != DialogResult.OK) return;
-                codes = form.ResolveCodes();
+
+                word = form.Word;
+                if (string.IsNullOrWhiteSpace(word))
+                {
+                    Notify("词条为空", "没有可加入的内容", ToolTipIcon.Warning);
+                    return;
+                }
                 rank = form.Rank;
+
+                if (!string.Equals(word, text, StringComparison.Ordinal))
+                {
+                    // 用户改了词面，编码要按新词面重算
+                    var again = new PinyinEncoder().Encode(word);
+                    codes = again.CandidateCodes.ToList();
+                    Log.Write($"re-encoded after edit: {word} -> {string.Join(",", codes)}");
+                }
+                else
+                {
+                    codes = form.ResolveCodes();
+                }
             }
             else
             {
@@ -193,17 +222,17 @@ public sealed class TrayHost
                 return;
             }
 
-            foreach (var code in codes) _store.Add(text, code, rank, source: "selection");
+            foreach (var code in codes) _store.Add(word, code, rank, source: "selection");
 
             if (!_settings.AutoDeploy)
             {
-                Notify("已加入词库", $"「{Shorten(text)}」已入库，点托盘菜单「立即写入输入法」生效", ToolTipIcon.Info);
+                Notify("已加入词库", $"「{Shorten(word)}」已入库，点托盘菜单「立即写入输入法」生效", ToolTipIcon.Info);
                 return;
             }
 
             var result = new ImeDeployer().Deploy(_store.Project());
             if (result.Ok)
-                Notify("已加入个人词典", $"「{Shorten(text)}」已写入输入法，直接打字即可", ToolTipIcon.Info);
+                Notify("已加入个人词典", $"「{Shorten(word)}」已写入输入法，直接打字即可", ToolTipIcon.Info);
             else
                 Notify("写入失败", result.Message, ToolTipIcon.Error);
         }

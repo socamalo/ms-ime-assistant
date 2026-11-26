@@ -24,12 +24,13 @@ public sealed class HotkeyHost : NativeWindow
 
     public HotkeyHost()
     {
+        // 用普通隐藏窗口接收 WM_HOTKEY。消息专用窗口（HWND_MESSAGE）在部分环境下
+        // 收不到 RegisterHotKey 的投递，实测无效。
         var cp = new CreateParams
         {
             Caption = "MsImeDictHotkey",
-            Parent = HWND_MESSAGE,
             Style = 0,
-            ExStyle = 0
+            ExStyle = 0x00000080  // WS_EX_TOOLWINDOW：不进 Alt+Tab
         };
         CreateHandle(cp);
     }
@@ -39,10 +40,18 @@ public sealed class HotkeyHost : NativeWindow
     {
         Unregister();
         if (!TryParse(hotkey, out _modifiers, out _vk)) return false;
-        return RegisterHotKey(Handle, _id, _modifiers | MOD_NOREPEAT, _vk);
+        IsRegistered = RegisterHotKey(Handle, _id, _modifiers | MOD_NOREPEAT, _vk);
+        return IsRegistered;
     }
 
-    public void Unregister() => UnregisterHotKey(Handle, _id);
+    /// <summary>当前热键是否注册成功。</summary>
+    public bool IsRegistered { get; private set; }
+
+    public void Unregister()
+    {
+        UnregisterHotKey(Handle, _id);
+        IsRegistered = false;
+    }
 
     protected override void WndProc(ref Message m)
     {

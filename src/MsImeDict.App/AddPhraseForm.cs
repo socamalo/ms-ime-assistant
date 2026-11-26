@@ -5,7 +5,7 @@ namespace MsImeDict.App;
 /// <summary>确认加入词库的对话框：确认词条、编码、候选位。</summary>
 public sealed class AddPhraseForm : Form
 {
-    private readonly TextBox _wordBox = new() { Dock = DockStyle.Top, Height = 72, Multiline = true, ReadOnly = true };
+    private readonly TextBox _wordBox = new() { Dock = DockStyle.Top, Height = 72, Multiline = true };
     private readonly TextBox _codeBox = new() { Dock = DockStyle.Top };
     private readonly ComboBox _rankBox = new() { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox _alsoAbbr = new() { Text = "同时写入简拼（首字母）", Dock = DockStyle.Top, Height = 24 };
@@ -14,6 +14,9 @@ public sealed class AddPhraseForm : Form
     public IReadOnlyList<string> Codes { get; }
     public int Rank => _rankBox.SelectedIndex + 1;
     public bool AlsoAbbrev => _alsoAbbr.Checked;
+
+    /// <summary>对话框里的词面（可能被用户改过）。</summary>
+    public string Word => _wordBox.Text.Trim();
 
     public AddPhraseForm(string selectedText, EncodedInfo info, int defaultRank)
     {
