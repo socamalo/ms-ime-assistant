@@ -121,6 +121,8 @@ public sealed class TrayHost
         {
             if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
         };
+        AccessibilityEnabler.Enable();
+
         var hookOk = _mouse.Start();
         Log.Write($"mouse hook started={hookOk}");
         if (!hookOk)
@@ -355,6 +357,7 @@ public sealed class TrayHost
         _mouse.Shutdown();
         _hotkey.Close();
         _keyHook?.Shutdown();
+        AccessibilityEnabler.Restore();
         _tray.Visible = false;
         _tray.Dispose();
         _store?.Dispose();

@@ -34,39 +34,86 @@ public static class SelectionReader
 
     private static string? ReadViaUia()
     {
+        // 1) 从焦点元素往上找 TextPattern
+        var fromFocus = ReadFrom(GetFocusedElement());
+        if (!string.IsNullOrWhiteSpace(fromFocus))
+        {
+            Log.Write("capture: uia path=focused");
+            return fromFocus;
+        }
+
+        // 2) 从窗口根节点全树找 TextPattern
+        //    Electron / Chromium 的选区挂在 Document 元素上，不在焦点元素本身，
+        //    只往上走找不到，必须从窗口根往下扫。
+        var fromWindow = ReadFrom(GetForegroundRoot());
+        if (!string.IsNullOrWhiteSpace(fromWindow))
+        {
+            Log.Write("capture: uia path=window-scan");
+            return fromWindow;
+        }
+
+        return null;
+    }
+
+    private static AutomationElement? GetForegroundRoot()
+    {
         try
         {
-            var element = GetFocusedElement();
-            if (element is null) return null;
+            var fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return null;
+            return AutomationElement.FromHandle(fg);
+        }
+        catch { return null; }
+    }
 
-            try
+    /// <summary>先在传入元素上找，再往上找父级，最后在整棵子树里找第一个有选区的 TextPattern。</summary>
+    private static string? ReadFrom(AutomationElement? element)
+    {
+        if (element is null) return null;
+
+        for (var e = element; e is not null; e = WalkUp(e))
+        {
+            var text = ReadSelection(e);
+            if (text is not null) return text;
+        }
+
+        // 子树扫描：限制数量，避免在大页面上卡住
+        try
+        {
+            var all = element.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty, true));
+            var limit = Math.Min(all.Count, 200);
+            for (var i = 0; i < limit; i++)
             {
-                if (element.Current.IsPassword) return null;
-            }
-            catch { /* 属性不可用时忽略 */ }
-
-            for (var e = element; e is not null; e = WalkUp(e))
-            {
-                try
-                {
-                    if (e.GetCurrentPattern(TextPattern.Pattern) is not TextPattern tp) continue;
-
-                    var ranges = tp.GetSelection();
-                    if (ranges.Length == 0) return null;
-
-                    var sb = new StringBuilder();
-                    foreach (var r in ranges) sb.Append(r.GetText(-1));
-                    var text = sb.ToString();
-                    return string.IsNullOrWhiteSpace(text) ? null : text;
-                }
-                catch (Exception)
-                {
-                    // 换父节点继续找
-                }
+                var text = ReadSelection(all[i]);
+                if (text is not null) return text;
             }
         }
-        catch (Exception) { }
+        catch { }
+
         return null;
+    }
+
+    private static string? ReadSelection(AutomationElement e)
+    {
+        try
+        {
+            if (e.Current.IsPassword) return null;
+        }
+        catch { }
+
+        try
+        {
+            if (e.GetCurrentPattern(TextPattern.Pattern) is not TextPattern tp) return null;
+            var ranges = tp.GetSelection();
+            if (ranges.Length == 0) return null;
+
+            var sb = new StringBuilder();
+            foreach (var r in ranges) sb.Append(r.GetText(-1));
+            var text = sb.ToString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch { return null; }
     }
 
     private static AutomationElement? GetFocusedElement()
