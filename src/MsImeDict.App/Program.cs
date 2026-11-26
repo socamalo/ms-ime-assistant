@@ -35,13 +35,15 @@ public sealed class TrayHost
     private readonly ApplicationContext _context;
     private readonly NotifyIcon _tray;
     private readonly AppSettings _settings = AppSettings.Load();
-    private readonly HotkeyHost _hotkey = new();
+    private readonly HotkeyForm _hotkey = new();
     private readonly MouseHook _mouse = new();
     private readonly QuickBar _bar = new();
 
     private PhraseStore? _store;
     private Control? _ui;
     private string _lastShown = "";
+    private KeyboardHook? _keyHook;
+    private DateTime _lastHotkeyAt = DateTime.MinValue;
 
     public TrayHost(ApplicationContext context)
     {
@@ -77,15 +79,33 @@ public sealed class TrayHost
         form.Hide();
         _ui = form;
 
-        _hotkey.Triggered += () =>
+        // 热键承载窗口：真实 Form，屏幕外 1x1
+        _hotkey.EnsureHandle();
+        _hotkey.Triggered += combo => FireHotkey(combo);
+
+        var combos = new List<string> { _settings.Hotkey };
+        foreach (var extra in new[] { "Ctrl+Alt+F9", "Ctrl+Shift+D" })
+            if (!combos.Contains(extra, StringComparer.OrdinalIgnoreCase)) combos.Add(extra);
+
+        var (okList, failedList) = _hotkey.RegisterAll(combos);
+        Log.Write($"hotkey register ok=[{string.Join(",", okList)}] failed=[{string.Join(",", failedList)}]");
+        if (okList.Count == 0)
+            Notify("热键注册失败", "所有候选组合都被占用：" + string.Join(",", failedList), ToolTipIcon.Warning);
+
+        // 第二条通道：低级键盘钩子自己认组合，绕开 RegisterHotKey 的消息投递
+        _keyHook = new KeyboardHook { NeedCtrl = true, NeedAlt = true, NeedShift = false };
+        if (HotkeyForm.TryParse(_settings.Hotkey, out _, out var targetVk))
         {
-            Log.Write("hotkey fired");
-            CaptureSelection();
-        };
-        var hotkeyOk = _hotkey.Register(_settings.Hotkey);
-        Log.Write($"start: hotkey={_settings.Hotkey} registered={hotkeyOk}");
-        if (!hotkeyOk)
-            Notify("热键注册失败", $"无法注册 {_settings.Hotkey}，可能被其他程序占用", ToolTipIcon.Warning);
+            _keyHook.TargetVk = targetVk;
+            var kbHookOk = _keyHook.Start();
+            _keyHook.Triggered += () =>
+            {
+                Log.Write($"keyboard hook fired ({_settings.Hotkey})");
+                _keyHook.Reset();
+                FireHotkey("hook");
+            };
+            Log.Write($"keyboard hook started={kbHookOk} targetVk=0x{targetVk:X}");
+        }
 
         _bar.AddRequested += text => AddPhrase(text, openDialog: false);
         _bar.MoreRequested += ShowMoreMenu;
@@ -153,6 +173,16 @@ public sealed class TrayHost
     }
 
     // ---------- 取词 ----------
+
+    /// <summary>热键触发入口。RegisterHotKey 与键盘钩子两条通道都走这里，用冷却去重。</summary>
+    private void FireHotkey(string source)
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastHotkeyAt).TotalMilliseconds < 500) return;
+        _lastHotkeyAt = now;
+        Log.Write($"hotkey -> capture ({source})");
+        Post(CaptureSelection);
+    }
 
     private void CaptureSelection()
     {
@@ -311,7 +341,8 @@ public sealed class TrayHost
     private void Shutdown()
     {
         _mouse.Shutdown();
-        _hotkey.Shutdown();
+        _hotkey.Close();
+        _keyHook?.Shutdown();
         _tray.Visible = false;
         _tray.Dispose();
         _store?.Dispose();
