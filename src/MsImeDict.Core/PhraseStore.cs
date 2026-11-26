@@ -109,15 +109,50 @@ CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
         => List().FirstOrDefault(p => string.Equals(p.Code, code, StringComparison.Ordinal));
 
     public Phrase? FindByText(string text)
-        => List().FirstOrDefault(p => string.Equals(p.Text, text, StringComparison.Ordinal));
+    {
+        var key = NormalizeText(text);
+        return List().FirstOrDefault(p => NormalizeText(p.Text) == key);
+    }
+
+    /// <summary>按关键词搜索（词条或编码包含即可），用于加词前人工确认。</summary>
+    public List<Phrase> Search(string keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword)) return List();
+        var k = keyword.Trim();
+        return List().Where(p =>
+            p.Text.Contains(k, StringComparison.OrdinalIgnoreCase) ||
+            p.Code.Contains(k, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>查重用的文本归一化：去首尾空白、压缩内部空白、忽略大小写。</summary>
+    public static string NormalizeText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var parts = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(" ", parts).ToLowerInvariant();
+    }
+
+    /// <summary>编码合法性：a-z 与 '，长度 1..32，不以 u/v 开头（会撞输入法模式键）。</summary>
+    public static bool IsValidCode(string? code)
+    {
+        if (string.IsNullOrEmpty(code) || code.Length > Mschxudp.MaxCodeLength) return false;
+        foreach (var ch in code)
+            if (!((ch >= 'a' && ch <= 'z') || ch == '\'')) return false;
+        return code[0] != 'u' && code[0] != 'v';
+    }
 
     // ---------- 写 ----------
 
     /// <summary>新增词条并落日志。已存在同 (词条, 编码) 时直接返回既有条目。</summary>
     public Phrase Add(string text, string code, int rank = 2, string source = "manual", bool enabled = true)
     {
+        if (!IsValidCode(code))
+            throw new ArgumentException($"编码 '{code}' 不合法：只允许 a-z 和 '，长度 1..32", nameof(code));
+        if (string.IsNullOrWhiteSpace(text))
+            throw new ArgumentException("词条不能为空", nameof(text));
+
         var duplicate = List().FirstOrDefault(p =>
-            string.Equals(p.Text, text, StringComparison.Ordinal) &&
+            NormalizeText(p.Text) == NormalizeText(text) &&
             string.Equals(p.Code, code, StringComparison.Ordinal));
         if (duplicate is not null) return duplicate;
 

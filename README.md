@@ -4,10 +4,6 @@
 
 选中文字 → 一键入词 → 立刻能打出来；词库存在你自己的私有 Git 仓库里，换电脑一句话拉回来。
 
-<p align="center">
-  <img src="docs/images/quickbar.png" alt="划词浮条" width="420">
-</p>
-
 ---
 
 ## 这个工具解决什么问题
@@ -346,7 +342,7 @@ Remove-Item $dir -Recurse -Force
 
 ## 作者
 
-**Daniel Ding**（丁燚）
+**Daniel Ding**
 <flaming.ding@gmail.com>
 
 这是一个中文输入法的问题，所以文档全部用中文写。

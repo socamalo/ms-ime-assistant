@@ -191,11 +191,19 @@ public sealed class TrayHost
         {
             _store ??= new PhraseStore();
 
-            var existingWord = _store.FindByText(text);
-            if (existingWord is not null && !openDialog)
+            // 加词前先查一遍：同一个词不管从哪个入口进来，都不重复入库
+            var existing = _store.FindByText(text);
+            if (existing is not null)
             {
                 Log.Write($"skip duplicate: {text}");
-                Post(() => _toast.ShowToast($"「{Shorten(text)}」已在词典中"));
+                var existingCodes = string.Join("、", _store.List()
+                    .Where(p => PhraseStore.NormalizeText(p.Text) == PhraseStore.NormalizeText(text))
+                    .Select(p => p.Code));
+                if (openDialog)
+                    MessageBox.Show($"「{text}」已经在词典里了。\n\n已有编码：{existingCodes}",
+                        "已在词典中", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else
+                    Post(() => _toast.ShowToast($"「{Shorten(text)}」已在词典中"));
                 return;
             }
 

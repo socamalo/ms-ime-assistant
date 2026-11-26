@@ -193,21 +193,28 @@ public static class Program
         var temp = Path.Combine(Path.GetTempPath(), $"msimdict-lex-{Guid.NewGuid():N}.lex");
         try
         {
-            // 预置一个「输入法里手工加的」条目
+            // 预置一个「母库里没有的」条目
             var existing = new List<PhraseEntry> { new("zzz", "手工词", 3) };
             File.WriteAllBytes(temp, Mschxudp.Serialize(existing));
 
+            // 默认语义：母库是唯一真相层，lex 里多出来的条目会被清掉
             var deployer = new ImeDeployer { LexPath = temp };
             var (entries, result) = deployer.Preview(new List<PhraseEntry> { new("abc", "程序词", 1) });
             Assert(result.Ok, "预览失败：" + result.Message);
-            Assert(entries.Any(e => e.Code == "zzz"), "原有条目丢失");
+            Assert(entries.All(e => e.Code != "zzz"), "母库外的条目应当被清掉");
             Assert(entries.Any(e => e.Code == "abc"), "新条目缺失");
-            Assert(entries[0].Code == "abc", "未按编码排序");
+
+            // 显式开启保留时，才保留外来条目
+            var keepDeployer = new ImeDeployer { LexPath = temp, KeepForeignEntries = true };
+            var (kept, _) = keepDeployer.Preview(new List<PhraseEntry> { new("abc", "程序词", 1) });
+            Assert(kept.Any(e => e.Code == "zzz"), "开启保留后外来条目丢失");
+            Assert(kept.Count == 2, $"条数不对：{kept.Count}");
+            Assert(kept[0].Code == "abc", "未按编码排序");
 
             var deployResult = deployer.Deploy(new List<PhraseEntry> { new("abc", "程序词", 1) });
             Assert(deployResult.Ok, "部署失败：" + deployResult.Message);
             var after = Mschxudp.Parse(File.ReadAllBytes(temp));
-            Assert(after.Count == 2, $"部署后条数不对：{after.Count}");
+            Assert(after.Count == 1 && after[0].Code == "abc", $"部署后内容不对：{after.Count} 条");
             Assert(deployResult.BackupPath is not null, "没有生成备份");
         }
         finally

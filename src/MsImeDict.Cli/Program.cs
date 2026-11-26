@@ -150,10 +150,28 @@ public static class Program
         var text = string.Join(' ', positional);
 
         using var store = new PhraseStore();
+
+        // 加词前先查一遍：同一个词不重复入库
+        var existing = store.FindByText(text);
+        if (existing is not null)
+        {
+            var existingCodes = string.Join("、", store.List()
+                .Where(p => PhraseStore.NormalizeText(p.Text) == PhraseStore.NormalizeText(text))
+                .Select(p => p.Code));
+            Console.WriteLine($"「{text}」已在词典中，编码：{existingCodes}");
+            return 0;
+        }
+
         var codes = new List<string>();
         if (opts.TryGetValue("--code", out var explicitCode) && !string.IsNullOrWhiteSpace(explicitCode))
         {
-            codes.Add(explicitCode.Trim().ToLowerInvariant());
+            var code = explicitCode.Trim().ToLowerInvariant();
+            if (!PhraseStore.IsValidCode(code))
+            {
+                Console.Error.WriteLine($"编码 '{code}' 不合法：只允许 a-z 和 '，长度 1..32，且不能以 u/v 开头");
+                return 1;
+            }
+            codes.Add(code);
         }
         else
         {
@@ -168,21 +186,21 @@ public static class Program
         var added = new List<Phrase>();
         foreach (var code in codes)
         {
-            var existing = store.FindByCode(code);
-            if (existing is not null)
+            var sameCode = store.FindByCode(code);
+            if (sameCode is not null)
             {
-                Console.WriteLine($"  已存在同编码条目 {code} -> {existing.Text}，更新");
-                existing.Text = text;
-                existing.Rank = rank;
-                existing.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                existing.Rev++;
+                Console.WriteLine($"  已存在同编码条目 {code} -> {sameCode.Text}，更新");
+                sameCode.Text = text;
+                sameCode.Rank = rank;
+                sameCode.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                sameCode.Rev++;
                 store.ApplyChange(new ChangeRecord
                 {
-                    Id = existing.Id, Rev = existing.Rev, Op = "upsert", Text = existing.Text,
-                    Code = existing.Code, Rank = existing.Rank, Enabled = existing.Enabled,
-                    Source = existing.Source, Ts = existing.UpdatedAt, Dev = DeviceId.Value
+                    Id = sameCode.Id, Rev = sameCode.Rev, Op = "upsert", Text = sameCode.Text,
+                    Code = sameCode.Code, Rank = sameCode.Rank, Enabled = sameCode.Enabled,
+                    Source = sameCode.Source, Ts = sameCode.UpdatedAt, Dev = DeviceId.Value
                 });
-                added.Add(existing);
+                added.Add(sameCode);
                 continue;
             }
             added.Add(store.Add(text, code, rank, source: "cli"));

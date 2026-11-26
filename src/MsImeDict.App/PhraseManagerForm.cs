@@ -10,6 +10,7 @@ public sealed class PhraseManagerForm : Form
     private readonly PhraseStore _store;
     private readonly ListView _list;
     private readonly Label _status;
+    private readonly TextBox _search;
 
     public PhraseManagerForm(PhraseStore store)
     {
@@ -47,6 +48,15 @@ public sealed class PhraseManagerForm : Form
         toolbar.Controls.Add(MakeButton("去重", (_, _) => Deduplicate()));
         toolbar.Controls.Add(MakeButton("刷新", (_, _) => Reload()));
 
+        _search = new TextBox
+        {
+            Width = 190,
+            Margin = new Padding(10, 2, 4, 0),
+            PlaceholderText = "搜索词条或编码"
+        };
+        _search.TextChanged += (_, _) => Reload();
+        toolbar.Controls.Add(_search);
+
         _status = new Label
         {
             Dock = DockStyle.Bottom,
@@ -79,7 +89,7 @@ public sealed class PhraseManagerForm : Form
     {
         _list.BeginUpdate();
         _list.Items.Clear();
-        var phrases = _store.List();
+        var phrases = _store.Search(_search?.Text ?? string.Empty);
         foreach (var p in phrases)
         {
             var item = new ListViewItem(p.Text) { Tag = p };
