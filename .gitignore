@@ -1,0 +1,21 @@
+# local data, never commit
+.local/
+*.db
+*.db-shm
+*.db-wal
+changes/
+snapshots/
+
+# build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+# editors
+.vscode/
+.idea/
+*.swp
