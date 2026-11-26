@@ -12,6 +12,9 @@ public sealed class AppSettings
     public string Hotkey { get; set; } = "Ctrl+Q";
     public int DefaultRank { get; set; } = 2;
     public bool AutoDeploy { get; set; } = true;
+
+    /// <summary>开机自动启动（写 HKCU 的 Run 键）。</summary>
+    public bool AutoStart { get; set; }
     public bool SyncEnabled { get; set; }
     public string RepoPath { get; set; } = "";
     public string RemoteUrl { get; set; } = "";

@@ -1,92 +1,302 @@
-# ms-ime-dict
+# 微软输入法助手
 
-把任意地方选中的文字一键加入微软拼音的个人词库，词库以 sqlite 为母库，
-通过一个**私有仓库**跨设备同步。
+给微软拼音装一个**可自己维护、能跨设备同步**的个人词库。
 
-```
-选中文本 ──► 取词 ──► 母库(sqlite) ──► 投影 ──► 微软拼音候选框
-                      │
-                      └─► 变更日志(jsonl) ──► 私有 Git 仓库 ──► 另一台设备
-```
+选中文字 → 一键入词 → 立刻能打出来；词库存在你自己的私有 Git 仓库里，换电脑一句话拉回来。
 
-## 它做什么
+<p align="center">
+  <img src="docs/images/quickbar.png" alt="划词浮条" width="420">
+</p>
 
-- 在任意应用里选中文字，按 `Ctrl+Alt+D`（或选区旁的浮条）唤起菜单，
-  「加入个人词典」后词条立刻进入母库
-- 自动生成拼音编码（中文全拼，含多音字与姓氏处理），落到微软拼音的
-  「用户自定义短语」候选里，并可指定候选位
-- 词条以 sqlite 存本地，同时写入追加式 JSONL 日志，推到私有仓库实现跨设备同步
-- 微软拼音那边是**投影产物**，随时可以从母库重建，丢了不心疼
+---
 
-## 安全边界
+## 这个工具解决什么问题
 
-这个工具会直接读写微软拼音的私有数据文件。设计上做了三件事：
+用微软拼音的人都遇到过这几件事。
 
-1. **只写一个文件**：`ChsPinyinEUDPv1.lex`（用户自定义短语）。
-   自学习词库 `ChsPinyinUDL.dat` 是哈希表结构、哈希函数未知、204 槽已用 199，
-   本项目只读不写。
-2. **写前备份，写后校验**：每次写入前对目标目录做快照，
-   写入后回读校验（魔数、偏移表自洽、逐条长度、编码字符集、候选位范围），
-   任一项不过就回滚。
-3. **随时可回滚**：`tools/restore-ime.ps1 -Pristine` 一条命令恢复到快照状态。
+**1. 自己造的词，下次还得重新选一遍。**
+微软拼音确实会"自学习"，但它学的是你在候选里选过的词，而且这个库有上限、会淘汰。
+专业术语、人名、公司名、产品代号、内部缩写——每次都要一个字一个字挑，挑完过阵子又被挤掉。
 
-```powershell
-# 备份
-pwsh -File tools/backup-ime.ps1 -Label before-start
+**2. 官方没有批量导入的接口。**
+设置里只有一个"导入 .dat"的按钮，没有 API、没有命令行。
+想加一百个词，只能一个个手打。
 
-# 查看所有快照
-pwsh -File tools/restore-ime.ps1 -List
+**3. 换电脑就丢。**
+微软拼音的个人词库**不随微软账户同步**。重装系统、换机器，几年积累的词库就没了。
 
-# 演练（不写盘）
-pwsh -File tools/restore-ime.ps1 -Pristine -DryRun
+**4. 第三方输入法能同步，但你未必能换。**
+搜狗、QQ 拼音的同步很成熟，可很多公司环境、很多人的习惯就是系统自带输入法。
+这不是喜好问题，是现实约束。
 
-# 真正回滚：还原快照内文件 + 删除我们创建的文件
-pwsh -File tools/restore-ime.ps1 -Pristine
-```
+**5. 现成的划词工具会弄坏你的剪贴板。**
+常见的做法是"备份剪贴板 → 模拟 Ctrl+C → 读文本 → 还原"。
+一旦还原失败，你刚截的图、复制的文件就没了。这个坑我们踩过，所以这个工具**不写剪贴板**。
 
-快照默认落在 `.local/ime-backups/`，已在 `.gitignore` 中排除。
+### 这个工具怎么做
 
-## 文档
-
-- [docs/ime-format.md](docs/ime-format.md) —— 微软拼音自定义短语文件格式
-  （本机实测 + 社区逆向，含解析陷阱与硬限制）
-
-## 状态
-
-| 阶段 | 内容 |
+| | 做法 |
 |---|---|
-| v0 | 格式写入器 + 校验 + 回滚工具（**已完成**） |
-| v1 | 托盘常驻 + 热键取词 + 拼音编码 + sqlite 母库 + 手动部署 |
-| v2 | 浮条 / Ctrl+右键 + 自动部署 + 私有仓库同步 |
-| v3 | 词条管理界面、导出 Rime / 搜狗 |
+| 加词 | 划词浮条一键加入，或 `Ctrl+C` 后按热键 |
+| 写入 | 直接生成微软拼音的"用户自定义短语"文件，立刻可用 |
+| 存储 | sqlite 为母库，每次变更一个 JSON 文件推到你的**私有**仓库 |
+| 安全 | 写入前备份、写入后回读校验、失败自动回滚、一条命令恢复原状 |
 
-## 构建与运行
+---
 
-需要 .NET 8 SDK。本机用的是免安装版（`%LOCALAPPDATA%\Microsoft\dotnet`），
-`build.ps1` 会自动找到它。
+## 它不做什么
+
+明确边界，避免误会：
+
+- **不碰剪贴板**：不发 `Ctrl+C`、不 `SetText`、不做"备份还原"。剪贴板永远是你的。
+- **不碰其他应用**：不发 `WM_GETOBJECT`、不注入进程、不改系统设置。
+- **不写微软拼音的自学习词库**（`ChsPinyinUDL.dat`）。那个文件是 204 槽的哈希表，
+  哈希函数未知、几乎写满，硬写会把词库搞坏。本工具只写"用户自定义短语"这一个文件。
+- **不上传任何上下文**：私有仓库里只有「词 + 编码 + 候选位」，没有来源应用、窗口标题、剪贴板历史。
+
+---
+
+## 快速开始
+
+### 用发布包（推荐）
+
+1. 到 [Releases](../../releases) 下载 `msimdict-app-win-x64.zip`，解压到任意目录
+2. 双击 `msimdict-app.exe`，托盘出现"微软输入法助手"
+3. 试用：选中一段文字 → 浮条点「加入词典」→ 在任意输入框打它的拼音
+
+自包含发布包，**不需要安装 .NET 运行时**。
+
+### 从源码构建
 
 ```powershell
+# 需要 .NET 8 SDK
 pwsh -File build.ps1 -Test      # 构建四个项目并跑 9 项自检
+tools\msimdict-app.cmd          # 启动托盘程序
 ```
 
-日常使用两个入口：
+---
+
+## 怎么用
+
+### 两种加词方式
+
+| 方式 | 操作 | 适用 |
+|---|---|---|
+| 划词 | 拖动选中 → 浮条「加入词典」 | 浏览器、编辑器等能暴露选区的应用 |
+| 热键 | `Ctrl+C` 复制 → `Ctrl+Q` | 任何应用，包括自绘界面、终端 |
+
+热键默认 `Ctrl+Q`，在「设置」里可以改。
+加完会浮出一条「「xxx」已加入词典」，1.2 秒自动消失。
+
+### 管理词库
+
+托盘右键 →「管理词库…」：查看所有词条、编码、候选位，支持新增、删除、去重。
+
+### 跨设备同步
+
+托盘右键 →「设置…」→ 填一个**空的私有仓库地址** → 「保存并同步」。
+
+首次同步会自动克隆、推送，之后每次加词后台自动同步。
+拉回来的词条会自动重放进母库并写入输入法，不用手动操作。
+
+---
+
+## 安全与回滚
+
+这个工具会写一个系统文件：`%APPDATA%\Microsoft\InputMethod\Chs\ChsPinyinEUDPv1.lex`。
+
+三层保护：
+
+1. **写前备份**：每次写入前把原文件复制到 `%LOCALAPPDATA%\MsImeDict\backups\`
+2. **写后校验**：回读文件检查魔数、偏移表自洽、逐条长度、编码字符集、候选位范围
+3. **失败回滚**：任何一步不过就恢复备份，绝不留下半成品
+
+整体回滚（连输入法数据目录一起）：
 
 ```powershell
-tools\msimdict.cmd list               # 词库管理（命令行）
-tools\msimdict.cmd add 闪狂魔药        # 加词并写入输入法
-tools\msimdict.cmd dump               # 看输入法里当前有哪些短语
-tools\msimdict.cmd verify             # 体检输入法短语文件
-tools\msimdict.cmd clean              # 清空（回到没有自定义短语的状态）
-
-tools\msimdict-app.cmd                # 托盘常驻：Ctrl+Alt+D 取词加词
+pwsh -File tools\backup-ime.ps1 -Label before-try     # 先拍快照
+pwsh -File tools\restore-ime.ps1 -List                # 看所有快照
+pwsh -File tools\restore-ime.ps1 -Pristine -DryRun    # 演练，不写盘
+pwsh -File tools\restore-ime.ps1 -Pristine            # 真正还原
 ```
 
-托盘菜单：加入选中的文字 / 立即写入输入法 / 同步到私有仓库 / 词库目录 / 设置。
+`-Pristine` 会把数据目录还原到快照状态，并删除本工具创建的文件（包括那个 `.lex`），
+也就是回到"从来没加过自定义短语"的干净状态。每个文件都按 sha256 校验。
+
+---
+
+## 工作原理
+
+```
+选中文字 / 剪贴板
+        │
+        ▼
+  PinyinEncoder  生成全拼 + 简拼两种编码
+        │
+        ▼
+  PhraseStore    sqlite 母库 + changes/<id>.<rev>.json
+        │         （私有仓库只同步这些 JSON）
+        ▼
+  ImeDeployer    读现有文件 → 合并 → 按编码升序 → 序列化
+        │         → 体检 → 备份 → 原子替换 → 落盘再校验
+        ▼
+  微软拼音候选框
+```
+
+技术细节全部写在 [docs/ime-format.md](docs/ime-format.md)：
+`mschxudp` 文件结构、记录必须按编码升序、UTF-16 终止符的解析陷阱、各项硬限制。
+
+同步协议见 [docs/sync.md](docs/sync.md)：为什么不用 sqlite 直接同步、
+为什么每次变更一个文件、如何切到 GitHub。
+
+---
+
+## 已知限制
+
+| 限制 | 说明 |
+|---|---|
+| 词面 ≤ 64 字符 | 微软拼音的硬限制。更长的内容只进母库，不写输入法 |
+| 编码 ≤ 32 字符 | 同上。超长的全拼会降级成简拼 |
+| 候选位 1–9 | 同一编码最多占 9 个坑 |
+| 多音字取首选读音 | 次常用读音会生成没人打的编码，需要别的读音时手工指定 |
+| 生效需要几秒 | 输入法自己刷新短语表，通常立刻生效，个别情况要等一会 |
+
+---
+
+## 给 AI Agent 的安装指引
+
+> 这一节是写给自动化 agent 的。人类用户看上面的"快速开始"就够了。
+
+### 前提确认
+
+```powershell
+# 1. 确认是 Windows 10/11
+[Environment]::OSVersion.Version.Major -ge 10
+
+# 2. 确认微软拼音已安装（本工具只支持它）
+Get-WinUserLanguageList | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' }
+```
+
+如果中文输入法不在列表里，**不要继续**——本工具写的是微软拼音专属的文件格式。
+
+### 安装步骤
+
+```powershell
+# 1. 解压发布包到固定位置
+$dir = "$env:LOCALAPPDATA\Programs\MsImeAssistant"
+Expand-Archive -Path .\msimdict-app-win-x64.zip -DestinationPath $dir -Force
+
+# 2. 先备份，再启动（顺序不能反）
+#    备份脚本在仓库 tools\ 下，需要一并下载
+pwsh -File tools\backup-ime.ps1 -Label before-first-run
+
+# 3. 启动托盘程序
+Start-Process "$dir\msimdict-app.exe"
+```
+
+### 安装后自检
+
+```powershell
+# a) 进程在跑
+Get-Process msimdict-app -ErrorAction SilentlyContinue
+
+# b) 看日志确认取词与热键都就绪
+Get-Content "$env:LOCALAPPDATA\MsImeDict\app.log" -Tail 10
+# 期望看到：keyboard hook started=True / hotkey register ok=[...] / mouse hook started=True
+
+# c) 写入一条测试词并验证文件结构
+tools\msimdict.cmd add 测试词条 --code csz
+tools\msimdict.cmd verify
+# 期望：体检结果：全部通过
+```
+
+### 开机自启
+
+**方式一：界面勾选（推荐给人类）**
+
+托盘右键 →「设置…」→ 勾选「开机自动启动」→ 保存。立即生效，写的是当前用户的启动项。
+
+**方式二：命令行（给 agent）**
+
+```powershell
+# 开启：写入当前用户的 Run 键，不需要管理员权限
+$exe = "$env:LOCALAPPDATA\Programs\MsImeAssistant\msimdict-app.exe"
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+  -Name 'MsImeAssistant' -Value "`"$exe`"" -PropertyType String -Force
+
+# 确认已写入
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant
+
+# 关闭：删掉这个值即可
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MsImeAssistant -ErrorAction SilentlyContinue
+```
+
+**注意事项**
+
+- 用的是 `HKCU` 而不是 `HKLM`，**不要用管理员权限**，也不需要。
+- 启动项里存的是 exe 的**绝对路径**。移动了安装目录要重新写一次，否则开机启动会指向不存在的文件。
+- 程序在启动时如果发现路径已经失效（比如已经被移动），不会自愈，需要重新勾选一次。
+- 想验证是否生效，不用等重启：注销再登录一次即可，或者直接看
+  `HKCU:\Software\Microsoft\Windows\CurrentVersion\Run` 里有没有 `MsImeAssistant`。
+
+### 计划任务方式（需要更高可靠性时）
+
+如果希望"登录后延迟启动、失败自动重试"，用计划任务比 Run 键更稳：
+
+```powershell
+$exe = "$env:LOCALAPPDATA\Programs\MsImeAssistant\msimdict-app.exe"
+$action  = New-ScheduledTaskAction -Execute $exe
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName 'MsImeAssistant' -Action $action -Trigger $trigger -Settings $settings -Force
+
+# 取消
+Unregister-ScheduledTask -TaskName 'MsImeAssistant' -Confirm:$false
+```
+
+两种方式**只用一种**，同时开会启动两个实例、注册两次热键（后一个会失败）。
+
+### 必须注意的坑
+
+1. **写入前一定要备份。** 目标文件是微软拼音的私有格式，写坏了会让"添加或编辑自定义短语"
+   设置页卡死。恢复办法是删掉 `ChsPinyinEUDPv1.lex`。
+2. **不要试图结束 `ChsIME.exe` 或 `ctfmon.exe`。** 它们是系统保护进程，`taskkill` 会被拒绝访问。
+3. **不要在写入后立刻断言失败。** 输入法自己决定何时刷新短语表，通常几秒内生效。
+4. **`tools\` 下的 `.ps1` 文件是 UTF-8 带 BOM。** 用编辑器改过之后要确认 BOM 还在，
+   否则 PowerShell 5.1 按 ANSI 读会乱码。
+5. **`.cmd` 文件是 GBK 编码。** `cmd.exe` 按 OEM 代码页读脚本，改成 UTF-8 中文会变乱码。
+6. **默认热键 `Ctrl+Q` 是系统级独占。** 它注册后，任何程序里的 `Ctrl+Q` 都会被本工具接管。
+   如果目标环境冲突严重，先在设置里改成组合键（如 `Ctrl+Alt+J`）。
+
+### 静默操作（无界面）
+
+```powershell
+tools\msimdict.cmd add "要加的词" --rank 2   # 加词并写入输入法
+tools\msimdict.cmd list                      # 列出母库
+tools\msimdict.cmd dump                      # 列出输入法里当前的自定义短语
+tools\msimdict.cmd verify                    # 结构体检
+tools\msimdict.cmd sync                      # 同步到私有仓库
+tools\msimdict.cmd clean                     # 删除自定义短语文件（回到初始状态）
+tools\msimdict.cmd rollback                  # 回滚到最近一次备份
+```
+
+### 卸载
+
+```powershell
+Stop-Process -Name msimdict-app -ErrorAction SilentlyContinue
+tools\msimdict.cmd clean                    # 删掉写入输入法的短语文件
+Remove-Item "$env:LOCALAPPDATA\MsImeDict" -Recurse -Force      # 母库与日志
+Remove-Item "$env:LOCALAPPDATA\Programs\MsImeAssistant" -Recurse -Force
+```
+
+词库数据在私有仓库里，卸载不会丢；换机器重新配置仓库地址即可拉回。
+
+---
 
 ## 作者
 
 **Daniel Ding**（丁燚）
-联系方式：<flaming.ding@gmail.com>
+<flaming.ding@gmail.com>
 
 这是一个中文输入法的问题，所以文档全部用中文写。
 
