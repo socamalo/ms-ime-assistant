@@ -93,10 +93,14 @@ public sealed class TrayHost
             Notify("热键注册失败", "所有候选组合都被占用：" + string.Join(",", failedList), ToolTipIcon.Warning);
 
         // 第二条通道：低级键盘钩子自己认组合，绕开 RegisterHotKey 的消息投递
-        _keyHook = new KeyboardHook { NeedCtrl = true, NeedAlt = true, NeedShift = false };
-        if (HotkeyForm.TryParse(_settings.Hotkey, out _, out var targetVk))
+        _keyHook = new KeyboardHook();
+        if (HotkeyForm.TryParse(_settings.Hotkey, out var hotkeyMods, out var targetVk))
         {
             _keyHook.TargetVk = targetVk;
+            _keyHook.NeedCtrl = (hotkeyMods & 0x0002) != 0;
+            _keyHook.NeedAlt = (hotkeyMods & 0x0001) != 0;
+            _keyHook.NeedShift = (hotkeyMods & 0x0004) != 0;
+            _keyHook.NeedWin = (hotkeyMods & 0x0008) != 0;
             var kbHookOk = _keyHook.Start();
             _keyHook.Triggered += () =>
             {

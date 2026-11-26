@@ -8,8 +8,8 @@ namespace MsImeDict.App;
 /// <summary>应用设置。</summary>
 public sealed class AppSettings
 {
-    /// <summary>主热键。F 区组合几乎没有软件占用，比 Ctrl+Alt+D 安全。</summary>
-    public string Hotkey { get; set; } = "Ctrl+Alt+F9";
+    /// <summary>主热键。Ctrl+单字母会在系统层劫持该组合，选一个各软件少用的。</summary>
+    public string Hotkey { get; set; } = "Ctrl+Q";
     public int DefaultRank { get; set; } = 2;
     public bool AutoDeploy { get; set; } = true;
     public bool SyncEnabled { get; set; }
