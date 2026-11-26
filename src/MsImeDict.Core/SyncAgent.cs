@@ -91,16 +91,26 @@ public sealed class SyncAgent
         else
             result.Steps.Add("已提交");
 
-        // 4) 拉取
-        var pull = Run(repo, $"git pull --rebase origin {settings.Branch}", ignoreError: true);
-        if (pull.Contains("CONFLICT") || pull.Contains("fatal:"))
+        // 4) 拉取。远端还没有这个分支时（首次推送）跳过。
+        var remoteHasBranch = Run(repo, $"git ls-remote --heads origin {settings.Branch}", ignoreError: true)
+            .Contains($"refs/heads/{settings.Branch}", StringComparison.Ordinal);
+
+        if (!remoteHasBranch)
         {
-            result.Ok = false;
-            result.Message = $"拉取失败：{pull.Trim()}";
-            Run(repo, "git rebase --abort", ignoreError: true);
-            return result;
+            result.Steps.Add("远端尚无该分支，跳过拉取");
         }
-        result.Steps.Add("已拉取远端");
+        else
+        {
+            var pull = Run(repo, $"git pull --rebase origin {settings.Branch}", ignoreError: true);
+            if (pull.Contains("CONFLICT") || pull.Contains("fatal:"))
+            {
+                result.Ok = false;
+                result.Message = $"拉取失败：{pull.Trim()}";
+                Run(repo, "git rebase --abort", ignoreError: true);
+                return result;
+            }
+            result.Steps.Add("已拉取远端");
+        }
 
         // 5) 远端变更 -> 本地，并重放到母库
         int pulled = 0;

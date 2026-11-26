@@ -34,6 +34,7 @@ public static class Program
                 "backup" => Backup(),
                 "rollback" => Rollback(rest),
                 "clean" => Clean(),
+                "sync" => Sync(),
                 _ => Unknown(cmd)
             };
         }
@@ -71,6 +72,7 @@ public static class Program
           backup                    备份当前自定义短语文件
           rollback [备份路径]        回滚到指定备份（不给就用最近一份）
           clean                     删除自定义短语文件，回到「从没有短语」的状态
+          sync                      把变更同步到私有仓库
         """);
     }
 
@@ -282,6 +284,26 @@ public static class Program
         }
         Console.WriteLine("没有可删除的自定义短语文件");
         return 0;
+    }
+
+    private static int Sync()
+    {
+        var settings = ConfigFile.LoadSync();
+        if (!settings.Enabled || string.IsNullOrWhiteSpace(settings.RepoPath))
+        {
+            Console.Error.WriteLine("同步未配置。在 settings.json 里设置 SyncEnabled=true、RepoPath、RemoteUrl。");
+            Console.Error.WriteLine("settings 路径：" + Paths.SettingsFile);
+            return 1;
+        }
+
+        using var store = new PhraseStore();
+        var agent = new SyncAgent(store);
+        var result = agent.Sync(settings);
+        Console.WriteLine(result.Message);
+        foreach (var step in result.Steps) Console.WriteLine("  - " + step);
+        if (result.Pushed > 0 || result.Pulled > 0)
+            Console.WriteLine($"  上传 {result.Pushed} 个变更文件，下载 {result.Pulled} 个");
+        return result.Ok ? 0 : 1;
     }
 
     // ---------- 参数解析 ----------

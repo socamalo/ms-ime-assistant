@@ -58,18 +58,16 @@ public sealed class TrayHost
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("加入选中的文字…", null, (_, _) => CaptureSelection());
+        menu.Items.Add("管理词库…", null, (_, _) => OpenManager());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("立即写入输入法", null, (_, _) => DeployNow());
         menu.Items.Add("同步到私有仓库", null, (_, _) => SyncNow());
-        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("词库目录", null, (_, _) => OpenFolder(Paths.AppDataDir));
         menu.Items.Add("设置", null, (_, _) => EditSettings());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Shutdown());
         _tray.ContextMenuStrip = menu;
 
-        _tray.DoubleClick += (_, _) => CaptureSelection();
+        _tray.DoubleClick += (_, _) => OpenManager();
     }
 
     public void Initialize()
@@ -308,6 +306,17 @@ public sealed class TrayHost
     }
 
     // ---------- 菜单动作 ----------
+
+    private void OpenManager()
+    {
+        try
+        {
+            _store ??= new PhraseStore();
+            using var form = new PhraseManagerForm(_store);
+            form.ShowDialog();
+        }
+        catch (Exception ex) { Notify("打开词库失败", ex.Message, ToolTipIcon.Error); }
+    }
 
     private void DeployNow()
     {
