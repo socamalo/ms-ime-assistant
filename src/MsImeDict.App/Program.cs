@@ -44,6 +44,7 @@ public sealed class TrayHost
     private Control? _ui;
     private string _lastShown = "";
     private KeyboardHook? _keyHook;
+    private ContextMenuStrip? _menu;
     private DateTime _lastHotkeyAt = DateTime.MinValue;
 
     public TrayHost(ApplicationContext context)
@@ -120,6 +121,7 @@ public sealed class TrayHost
         _mouse.AnyMouseDown += pt =>
         {
             if (_bar.Visible && !_bar.Bounds.Contains(pt)) _bar.HideBar();
+            if (_menu is not null && _menu.Visible && !_menu.Bounds.Contains(pt)) CloseMenu();
         };
         AccessibilityEnabler.Enable();
 
@@ -162,13 +164,32 @@ public sealed class TrayHost
 
     private void ShowMoreMenu(string text, Point at)
     {
+        CloseMenu();
+
         var menu = new ContextMenuStrip();
         menu.Items.Add($"「{Shorten(text)}」", null, (_, _) => { });
         ((ToolStripMenuItem)menu.Items[0]!).Enabled = false;
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("加入个人词典", null, (_, _) => AddPhrase(text, openDialog: false));
-        menu.Items.Add("加入并指定编码…", null, (_, _) => AddPhrase(text, openDialog: true));
+        menu.Items.Add("加入个人词典", null, (_, _) => { CloseMenu(); AddPhrase(text, openDialog: false); });
+        menu.Items.Add("加入并指定编码…", null, (_, _) => { CloseMenu(); AddPhrase(text, openDialog: true); });
+        menu.Closed += (_, _) => { if (ReferenceEquals(_menu, menu)) _menu = null; };
+
+        _menu = menu;
         menu.Show(at);
+    }
+
+    /// <summary>
+    /// 关闭当前菜单。
+    ///
+    /// 菜单的「点外部关闭」依赖 WinForms 的鼠标捕获，会被全局低级鼠标钩子干扰，
+    /// 实测出现「打开后关不掉」。这里改为自己管生命周期：任何鼠标按下、Esc、
+    /// 或再次打开菜单时都显式关掉。
+    /// </summary>
+    private void CloseMenu()
+    {
+        if (_menu is null) return;
+        try { _menu.Close(); } catch { }
+        _menu = null;
     }
 
     private bool IsOwnWindow()
