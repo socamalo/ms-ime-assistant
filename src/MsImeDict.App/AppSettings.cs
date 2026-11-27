@@ -10,7 +10,7 @@ public sealed class AppSettings
 {
     /// <summary>主热键。Ctrl+单字母会在系统层劫持该组合，选一个各软件少用的。</summary>
     public string Hotkey { get; set; } = "Ctrl+Q";
-    public int DefaultRank { get; set; } = 2;
+    public int DefaultRank { get; set; } = 1;
     public bool AutoDeploy { get; set; } = true;
 
     /// <summary>开机自动启动（写 HKCU 的 Run 键）。</summary>

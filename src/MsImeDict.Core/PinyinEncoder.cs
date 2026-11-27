@@ -89,7 +89,11 @@ public sealed class PinyinEncoder
             if (!abbr.Contains(a)) abbr.Add(a);
         }
 
-        // 全拼太长就只留简拼
+        // 只产出全拼一条。
+        //
+        // 简拼（每字首字母）不单独写：同一个词挂两条码会让词库翻倍，
+        // 而且输入法自己会把「打首字母」映射到候选，不需要我们替它建别名。
+        // 需要别名时，在词库管理界面用「新增词条 + 指定编码」手工加。
         var hasChinese = usableParts.Any(p => p.IsChinese);
         var codes = new List<string>();
         foreach (var f in full)
@@ -97,14 +101,9 @@ public sealed class PinyinEncoder
             if (f.Length <= Mschxudp.MaxCodeLength) codes.Add(f);
             else notes.Add($"全拼 '{f}' 超过 {Mschxudp.MaxCodeLength} 字符，丢弃");
         }
-        // 纯英文/数字的词不给简拼：单字母简拼会把整个按键劫持掉
-        if (hasChinese)
-        {
-            foreach (var a in abbr)
-            {
-                if (a.Length <= Mschxudp.MaxCodeLength && !codes.Contains(a)) codes.Add(a);
-            }
-        }
+
+        // 纯英文/数字的词：全拼即原文
+        _ = hasChinese;
 
         // u / v 开头会撞微软拼音的模式键
         var filtered = new List<string>();

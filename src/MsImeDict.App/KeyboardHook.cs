@@ -14,6 +14,8 @@ public sealed class KeyboardHook : NativeWindow
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
     private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYUP = 0x0105;
     private const int VK_CONTROL = 0x11;
     private const int VK_MENU = 0x12;
     private const int VK_SHIFT = 0x10;
@@ -78,6 +80,17 @@ public sealed class KeyboardHook : NativeWindow
         if (nCode < 0) return CallNextHookEx(_hook, nCode, wParam, lParam);
 
         var msg = wParam.ToInt32();
+
+        // 松开时把按键从按下集合里移除。
+        // 不处理 keyup 的话，按过一次 Q 之后 Q 会永远留在集合里，
+        // 之后所有 Q 键的 keydown 都被当成「长按重复」忽略 —— 热键从此失效。
+        if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
+        {
+            var up = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+            _down.Remove(up.vkCode);
+            return CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
+
         if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN)
             return CallNextHookEx(_hook, nCode, wParam, lParam);
 

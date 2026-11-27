@@ -120,7 +120,7 @@ public sealed class PhraseManagerForm : Form
         }
 
         foreach (var code in encoded.CandidateCodes)
-            _store.Add(text, code, 2, source: "manual");
+            _store.Add(text, code, 1, source: "manual");
 
         var result = new ImeDeployer().Deploy(_store.Project());
         Reload();

@@ -12,7 +12,7 @@ namespace MsImeDict.Core;
 public sealed class PortableSettings
 {
     [JsonPropertyName("hotkey")] public string Hotkey { get; set; } = "Ctrl+Q";
-    [JsonPropertyName("defaultRank")] public int DefaultRank { get; set; } = 2;
+    [JsonPropertyName("defaultRank")] public int DefaultRank { get; set; } = 1;
     [JsonPropertyName("autoDeploy")] public bool AutoDeploy { get; set; } = true;
 
     /// <summary>Unix 秒。用于判断哪一侧更新，决定谁覆盖谁。</summary>

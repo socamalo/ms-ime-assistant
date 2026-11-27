@@ -144,7 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
     // ---------- 写 ----------
 
     /// <summary>新增词条并落日志。已存在同 (词条, 编码) 时直接返回既有条目。</summary>
-    public Phrase Add(string text, string code, int rank = 2, string source = "manual", bool enabled = true)
+    public Phrase Add(string text, string code, int rank = 1, string source = "manual", bool enabled = true)
     {
         if (!IsValidCode(code))
             throw new ArgumentException($"编码 '{code}' 不合法：只允许 a-z 和 '，长度 1..32", nameof(code));

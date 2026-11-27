@@ -180,7 +180,7 @@ public static class Program
             foreach (var n in enc.Notes) Console.WriteLine("  ! " + n);
         }
 
-        int rank = 2;
+        int rank = 1;
         if (opts.TryGetValue("--rank", out var rankText) && int.TryParse(rankText, out var r)) rank = r;
 
         var added = new List<Phrase>();
