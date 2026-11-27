@@ -30,11 +30,12 @@ public sealed class PhraseManagerForm : Form
             MultiSelect = true,
             GridLines = false
         };
-        _list.Columns.Add("词条", 260);
-        _list.Columns.Add("编码", 200);
+        _list.Columns.Add("词条", 240);
+        _list.Columns.Add("编码", 160);
+        _list.Columns.Add("简拼编码", 120);
         _list.Columns.Add("候选位", 60, HorizontalAlignment.Center);
-        _list.Columns.Add("来源", 80);
-        _list.Columns.Add("加入时间", 140);
+        _list.Columns.Add("来源", 70);
+        _list.Columns.Add("加入时间", 130);
 
         var toolbar = new FlowLayoutPanel
         {
@@ -94,13 +95,14 @@ public sealed class PhraseManagerForm : Form
         {
             var item = new ListViewItem(p.Text) { Tag = p };
             item.SubItems.Add(p.Code);
+            item.SubItems.Add(p.Abbr.Length == 0 ? "（无）" : p.Abbr);
             item.SubItems.Add(p.Rank.ToString());
             item.SubItems.Add(p.Source);
             item.SubItems.Add(DateTimeOffset.FromUnixTimeSeconds(p.CreatedAt).ToLocalTime().ToString("MM-dd HH:mm"));
             _list.Items.Add(item);
         }
         _list.EndUpdate();
-        _status.Text = $"共 {phrases.Count} 条　·　编码文件：{Paths.LexFile}";
+        _status.Text = $"共 {phrases.Count} 个词（一个词一行，部署时展开成全拼 + 简拼两条）　·　编码文件：{Paths.LexFile}";
     }
 
     private void AddPhrase()
@@ -111,6 +113,13 @@ public sealed class PhraseManagerForm : Form
         var text = input.Value.Trim();
         if (text.Length == 0) return;
 
+        if (_store.FindByText(text) is not null)
+        {
+            MessageBox.Show(this, $"「{text}」已在词库中。词库一个词只有一行。", "已存在",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
         var encoded = new PinyinEncoder().Encode(text);
         if (encoded.CandidateCodes.Count == 0)
         {
@@ -119,13 +128,15 @@ public sealed class PhraseManagerForm : Form
             return;
         }
 
-        foreach (var code in encoded.CandidateCodes)
-            _store.Add(text, code, 1, source: "manual");
+        var code = encoded.CandidateCodes[0];
+        var phrase = _store.Add(text, code, 1, source: "manual");
 
         var result = new ImeDeployer().Deploy(_store.Project());
         Reload();
         if (!result.Ok)
             MessageBox.Show(this, result.Message, "写入失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        else
+            _status.Text = $"已加入「{text}」：全拼 {code}，简拼 {(phrase.Abbr.Length == 0 ? "（无）" : phrase.Abbr)}";
     }
 
     private void Deduplicate()

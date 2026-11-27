@@ -15,8 +15,19 @@ public static class Paths
     public static string SelfLearningFile => Path.Combine(ImeDir, "ChsPinyinUDL.dat");
 
     /// <summary>运行时状态（sqlite、日志、备份）。</summary>
-    public static string AppDataDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MsImeDict");
+    public static string AppDataDir
+    {
+        get
+        {
+            // 允许把整个运行时目录搬到别处：自动化测试用临时目录，
+            // 便携安装可以指向 U 盘，不必污染 %LOCALAPPDATA%。
+            var custom = Environment.GetEnvironmentVariable("MSIMDICT_HOME");
+            if (!string.IsNullOrWhiteSpace(custom) && Path.IsPathRooted(custom)) return custom;
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MsImeDict");
+        }
+    }
 
     public static string DatabaseFile => Path.Combine(AppDataDir, "phrases.db");
 

@@ -199,11 +199,9 @@ public sealed class TrayHost
             if (existing is not null)
             {
                 Log.Write($"skip duplicate: {text}");
-                var existingCodes = string.Join("、", _store.List()
-                    .Where(p => PhraseStore.NormalizeText(p.Text) == PhraseStore.NormalizeText(text))
-                    .Select(p => p.Code));
+                var abbrText = existing.Abbr.Length == 0 ? "（无）" : existing.Abbr;
                 if (openDialog)
-                    MessageBox.Show($"「{text}」已经在词典里了。\n\n已有编码：{existingCodes}",
+                    MessageBox.Show($"「{text}」已经在词典里了。\n\n编码：{existing.Code}\n简拼：{abbrText}",
                         "已在词典中", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 else
                     Post(() => _toast.ShowToast($"「{Shorten(text)}」已在词典中"));
@@ -217,8 +215,9 @@ public sealed class TrayHost
                 Notes = encoded.Notes.ToList()
             };
 
-            var word = text;
-            List<string> codes;
+            string word;
+            string code;
+            string abbr;
             int rank;
 
             if (openDialog)
@@ -232,32 +231,25 @@ public sealed class TrayHost
                     Notify("词条为空", "没有可加入的内容", ToolTipIcon.Warning);
                     return;
                 }
+                code = form.Code;
+                abbr = form.Abbr;
                 rank = form.Rank;
-
-                if (!string.Equals(word, text, StringComparison.Ordinal))
-                {
-                    var again = new PinyinEncoder().Encode(word);
-                    codes = again.CandidateCodes.ToList();
-                    Log.Write($"re-encoded: {word} -> {string.Join(",", codes)}");
-                }
-                else
-                {
-                    codes = form.ResolveCodes();
-                }
             }
             else
             {
-                codes = info.Codes;
+                word = text;
+                code = info.Codes.FirstOrDefault() ?? "";
+                abbr = PinyinEncoder.AbbreviationOf(word);
                 rank = _settings.DefaultRank;
             }
 
-            if (codes.Count == 0)
+            if (code.Length == 0)
             {
                 Notify("无法生成编码", "这段内容里没有可编码的汉字或字母", ToolTipIcon.Warning);
                 return;
             }
 
-            foreach (var code in codes) _store.Add(word, code, rank, source: "clipboard");
+            var phrase = _store.Add(word, code, rank, source: "clipboard", abbr: abbr);
 
             var result = new ImeDeployer().Deploy(_store.Project());
             if (!result.Ok)
@@ -266,7 +258,8 @@ public sealed class TrayHost
                 return;
             }
 
-            Log.Write($"added: {word} -> {string.Join(",", codes)}");
+            var abbrShown = phrase.Abbr.Length == 0 ? "无简拼" : phrase.Abbr;
+            Log.Write($"added: {word} -> {code} / {abbrShown}");
             Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
             if (_settings.SyncEnabled) SyncInBackground();
         }
@@ -304,7 +297,8 @@ public sealed class TrayHost
 
     private void ShowAbout()
     {
-        var version = typeof(TrayHost).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+        var version = AppInfo.Version;
+        var wordCount = _store?.List().Count ?? 0;
         var text = string.Join(Environment.NewLine, new[]
         {
             "微软输入法助手",
@@ -315,7 +309,7 @@ public sealed class TrayHost
             "",
             "取词方式：只读系统剪贴板（先 Ctrl+C 复制，再按热键）",
             "词条数据仓库：socamalo/ms-ime-dict-data（私有）",
-            $"本地词库：{Paths.DatabaseFile}",
+            $"本地词库：{Paths.DatabaseFile}（{wordCount} 个词）",
             $"输入法文件：{Paths.LexFile}"
         });
         MessageBox.Show(text, "关于 微软输入法助手", MessageBoxButtons.OK, MessageBoxIcon.Information);

@@ -5,9 +5,18 @@ namespace MsImeDict.Cli;
 
 public static class Program
 {
+    /// <summary>版本号来自 Directory.Build.props，全仓库唯一来源。</summary>
+    public static string Version => AppInfo.Version;
+
     public static int Main(string[] args)
     {
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+
+        if (args.Length == 1 && args[0] is "-v" or "--version" or "version")
+        {
+            Console.WriteLine($"msimdict {Version}");
+            return 0;
+        }
 
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
@@ -60,10 +69,10 @@ public static class Program
           dump                      列出输入法当前的自定义短语
           verify                    对自定义短语文件做结构体检
           encode <文本>              只看会生成哪些编码
-          list                      列出母库词条
+          list                      列出母库词条（一个词一行）
           add <文本> [选项]           加入词库并部署
-                 --code <编码>       指定编码（不给就自动生成）
-                 --rank <1-9>       指定候选位，默认 2
+                 --code <编码>       指定全拼编码（不给就自动生成）
+                 --rank <1-9>       指定候选位，默认 1
                  --no-deploy         只入库，不写输入法
           remove <id>               删除词条并部署
           preview                   预览将要写入的内容
@@ -73,7 +82,9 @@ public static class Program
           rollback [备份路径]        回滚到指定备份（不给就用最近一份）
           clean                     删除自定义短语文件，回到「从没有短语」的状态
           sync                      把变更同步到私有仓库
+          version                   显示版本号
         """);
+        Console.WriteLine($"版本 {Version}");
     }
 
     // ---------- 查看 ----------
@@ -134,10 +145,12 @@ public static class Program
     {
         using var store = new PhraseStore();
         var list = store.List();
-        Console.WriteLine($"母库：{store.DatabaseFile}  共 {list.Count} 条");
+        Console.WriteLine($"母库：{store.DatabaseFile}  共 {list.Count} 个词");
         Console.WriteLine();
+        Console.WriteLine($"  {"词条",-12} {"编码",-24} {"简拼编码",-12} 候选位  状态");
+        Console.WriteLine($"  {new string('-', 12)} {new string('-', 24)} {new string('-', 12)} ------  ----");
         foreach (var p in list)
-            Console.WriteLine($"  {p.Id}  候选位{p.Rank}  {p.Code,-24} -> {p.Text}   [{(p.Enabled ? "启用" : "停用")}]");
+            Console.WriteLine($"  {p.Text,-12} {p.Code,-24} {(p.Abbr.Length == 0 ? "（无）" : p.Abbr),-12} {p.Rank,6}  {(p.Enabled ? "启用" : "停用")}");
         return 0;
     }
 
@@ -164,17 +177,16 @@ public static class Program
                 store.ApplyChange(new ChangeRecord
                 {
                     Id = existing.Id, Rev = existing.Rev, Op = "upsert", Text = existing.Text,
-                    Code = existing.Code, Rank = existing.Rank, Enabled = existing.Enabled,
-                    Source = existing.Source, Ts = existing.UpdatedAt, Dev = DeviceId.Value
+                    Code = existing.Code, Abbr = existing.Abbr, Rank = existing.Rank,
+                    Enabled = existing.Enabled, Source = existing.Source,
+                    Ts = existing.UpdatedAt, Dev = DeviceId.Value
                 });
                 Console.WriteLine($"「{text}」已在词典中，候选位改为 {existing.Rank}");
                 return DoDeploy(store);
             }
 
-            var existingCodes = string.Join("、", store.List()
-                .Where(p => PhraseStore.NormalizeText(p.Text) == PhraseStore.NormalizeText(text))
-                .Select(p => p.Code));
-            Console.WriteLine($"「{text}」已在词典中，编码：{existingCodes}");
+            var abbr = existing.Abbr.Length == 0 ? "（无）" : existing.Abbr;
+            Console.WriteLine($"「{text}」已在词典中：编码 {existing.Code}，简拼 {abbr}");
             return 0;
         }
 
@@ -199,29 +211,15 @@ public static class Program
         int rank = 1;
         if (opts.TryGetValue("--rank", out var rankText) && int.TryParse(rankText, out var r)) rank = r;
 
-        var added = new List<Phrase>();
-        foreach (var code in codes)
+        if (codes.Count == 0)
         {
-            var sameCode = store.FindByCode(code);
-            if (sameCode is not null)
-            {
-                Console.WriteLine($"  已存在同编码条目 {code} -> {sameCode.Text}，更新");
-                sameCode.Text = text;
-                sameCode.Rank = rank;
-                sameCode.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                sameCode.Rev++;
-                store.ApplyChange(new ChangeRecord
-                {
-                    Id = sameCode.Id, Rev = sameCode.Rev, Op = "upsert", Text = sameCode.Text,
-                    Code = sameCode.Code, Rank = sameCode.Rank, Enabled = sameCode.Enabled,
-                    Source = sameCode.Source, Ts = sameCode.UpdatedAt, Dev = DeviceId.Value
-                });
-                added.Add(sameCode);
-                continue;
-            }
-            added.Add(store.Add(text, code, rank, source: "cli"));
-            Console.WriteLine($"  已入库 {code} -> {text}  候选位{rank}");
+            Console.Error.WriteLine("生成不出可用编码，可用 --code 手工指定");
+            return 1;
         }
+
+        var phrase = store.Add(text, codes[0], rank, source: "cli");
+        var abbrText = phrase.Abbr.Length == 0 ? "（无）" : phrase.Abbr;
+        Console.WriteLine($"  已入库 {phrase.Code} -> {text}  简拼 {abbrText}  候选位{phrase.Rank}");
 
         if (opts.ContainsKey("--no-deploy")) return 0;
         return DoDeploy(store);

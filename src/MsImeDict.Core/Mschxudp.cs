@@ -12,13 +12,20 @@ public sealed class PhraseEntry
     /// <summary>候选位置，1..9。</summary>
     public int Order { get; set; } = 1;
 
+    /// <summary>
+    /// 这条记录是不是「简拼」展开出来的。
+    /// 不进文件格式，只在合并阶段用来决定同码冲突时谁优先：全拼优先于简拼。
+    /// </summary>
+    public bool IsAbbr { get; set; }
+
     public PhraseEntry() { }
 
-    public PhraseEntry(string code, string word, int order = 1)
+    public PhraseEntry(string code, string word, int order = 1, bool isAbbr = false)
     {
         Code = code;
         Word = word;
         Order = order;
+        IsAbbr = isAbbr;
     }
 
     public override string ToString() => $"#{Order} {Code} -> {Word}";

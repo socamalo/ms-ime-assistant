@@ -2,44 +2,52 @@ using MsImeDict.Core;
 
 namespace MsImeDict.App;
 
-/// <summary>确认加入词库的对话框：确认词条、编码、候选位。</summary>
+/// <summary>确认加入词库的对话框：词条、全拼编码、简拼编码、候选位。</summary>
 public sealed class AddPhraseForm : Form
 {
-    private readonly TextBox _wordBox = new() { Dock = DockStyle.Top, Height = 72, Multiline = true };
+    private readonly TextBox _wordBox = new() { Dock = DockStyle.Top, Height = 60, Multiline = true };
     private readonly TextBox _codeBox = new() { Dock = DockStyle.Top };
+    private readonly TextBox _abbrBox = new() { Dock = DockStyle.Top };
     private readonly ComboBox _rankBox = new() { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly CheckBox _alsoAbbr = new() { Text = "同时写入简拼（首字母）", Dock = DockStyle.Top, Height = 24 };
+    private bool _syncing;
 
-    public string SelectedText { get; }
-    public IReadOnlyList<string> Codes { get; }
-    public int Rank => _rankBox.SelectedIndex + 1;
-    public bool AlsoAbbrev => _alsoAbbr.Checked;
-
-    /// <summary>对话框里的词面（可能被用户改过）。</summary>
     public string Word => _wordBox.Text.Trim();
+    public string Code => _codeBox.Text.Trim().ToLowerInvariant();
+    public string Abbr => _abbrBox.Text.Trim().ToLowerInvariant();
+    public int Rank => _rankBox.SelectedIndex + 1;
 
     public AddPhraseForm(string selectedText, EncodedInfo info, int defaultRank)
     {
-        SelectedText = selectedText;
-        Codes = info.Codes;
-
         Text = "加入个人词典";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(420, 230);
+        ClientSize = new Size(440, 300);
         AutoScaleMode = AutoScaleMode.Dpi;
 
-        var labels = new Label { Dock = DockStyle.Top, Height = 22, Text = "选中的文字" };
-        var codeLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "编码（打这几个字母就能打出该词）" };
+        var wordLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "词条" };
+        var codeLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "编码（全拼，打这几个字母就能打出该词）" };
+        var abbrLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "简拼编码（首字母，如 zrr；留空表示不写）" };
         var rankLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "候选位置" };
 
         for (var i = 1; i <= 9; i++) _rankBox.Items.Add(i);
         _rankBox.SelectedIndex = Math.Clamp(defaultRank, 1, 9) - 1;
 
+        _wordBox.Text = selectedText;
         _codeBox.Text = info.Codes.FirstOrDefault() ?? "";
-        _alsoAbbr.Checked = info.Codes.Count > 1;
+        _abbrBox.Text = PinyinEncoder.AbbreviationOf(selectedText);
+
+        // 改词条时同步重算两个编码，用户随后仍可手工改
+        _wordBox.TextChanged += (_, _) =>
+        {
+            if (_syncing) return;
+            _syncing = true;
+            var w = _wordBox.Text.Trim();
+            _codeBox.Text = new PinyinEncoder().Encode(w).CandidateCodes.FirstOrDefault() ?? "";
+            _abbrBox.Text = PinyinEncoder.AbbreviationOf(w);
+            _syncing = false;
+        };
 
         var ok = new Button { Text = "加入", DialogResult = DialogResult.OK, Width = 90, Height = 30 };
         var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Width = 90, Height = 30 };
@@ -61,32 +69,20 @@ public sealed class AddPhraseForm : Form
             Dock = DockStyle.Bottom,
             Height = 34,
             ForeColor = Color.DimGray,
-            Text = info.Notes.Count > 0 ? string.Join("；", info.Notes) : "已写入个人词典，直接打字即可"
+            Text = info.Notes.Count > 0 ? string.Join("；", info.Notes) : "写入后直接打字即可，不需要切换输入法"
         };
 
+        // DockStyle.Top 是后加的先贴顶，按视觉顺序倒着 Add
         Controls.Add(buttons);
         Controls.Add(notes);
         Controls.Add(rankLabel);
         Controls.Add(_rankBox);
+        Controls.Add(abbrLabel);
+        Controls.Add(_abbrBox);
         Controls.Add(codeLabel);
         Controls.Add(_codeBox);
-        Controls.Add(labels);
+        Controls.Add(wordLabel);
         Controls.Add(_wordBox);
-        _wordBox.Text = selectedText;
-    }
-
-    /// <summary>最终要写入的编码列表。</summary>
-    public List<string> ResolveCodes()
-    {
-        var codes = new List<string>();
-        var manual = _codeBox.Text.Trim().ToLowerInvariant();
-        if (!string.IsNullOrEmpty(manual)) codes.Add(manual);
-        if (AlsoAbbrev)
-        {
-            foreach (var c in Codes)
-                if (!codes.Contains(c)) codes.Add(c);
-        }
-        return codes;
     }
 }
 

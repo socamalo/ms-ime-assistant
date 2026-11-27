@@ -49,14 +49,34 @@ public sealed class ImeDeployer
         if (existing is null) { result.Ok = false; return (new List<PhraseEntry>(), result); }
 
         var store = fromStore.ToList();
-        var storeCodes = store.Select(e => e.Code).ToHashSet(StringComparer.Ordinal);
 
-        // 同一编码只能有一条：母库优先，其次（可选的）保留原有
+        // 输入法的词库一个编码只能挂一条（写入时也会拒绝重复编码），
+        // 所以按编码收敛。冲突规则：全拼优先于简拼，母库优先于输入法里已有的。
         var byCode = new Dictionary<string, PhraseEntry>(StringComparer.Ordinal);
-        if (KeepForeignEntries)
-            foreach (var e in existing) byCode[e.Code] = e;
-        foreach (var e in store) byCode[e.Code] = e;
+        var conflicts = new List<string>();
 
+        void Take(PhraseEntry e)
+        {
+            if (!byCode.TryGetValue(e.Code, out var current)) { byCode[e.Code] = e; return; }
+
+            if (current.IsAbbr && !e.IsAbbr)
+            {
+                byCode[e.Code] = e;
+                conflicts.Add($"简拼 {e.Code}（{current.Word}）与全拼编码冲突，未写入");
+                return;
+            }
+
+            if (current.Word != e.Word)
+                conflicts.Add($"编码 {e.Code} 已被「{current.Word}」占用，「{e.Word}」的同名编码未写入");
+        }
+
+        foreach (var e in store) Take(e);
+        if (KeepForeignEntries)
+            foreach (var e in existing) Take(e);
+
+        foreach (var c in conflicts.Distinct()) result.Problems.Add(c);
+
+        var storeCodes = store.Select(e => e.Code).ToHashSet(StringComparer.Ordinal);
         result.RemovedCount = existing.Count(e => !storeCodes.Contains(e.Code));
 
         var final = new List<PhraseEntry>();

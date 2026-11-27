@@ -5,13 +5,17 @@ using Microsoft.Data.Sqlite;
 
 namespace MsImeDict.Core;
 
-/// <summary>母库里的一条词条。</summary>
+/// <summary>母库里的一条词条。一个词只有一条，全拼编码 + 首字母简拼都存在这一行。</summary>
 public sealed class Phrase
 {
     public string Id { get; set; } = "";
     public string Text { get; set; } = "";
     public string Code { get; set; } = "";
-    public int Rank { get; set; } = 2;
+
+    /// <summary>首字母简拼，如「智睿瑞」→ zrr。空表示这个词不配简拼（单字词、u/v 开头等）。</summary>
+    public string Abbr { get; set; } = "";
+
+    public int Rank { get; set; } = 1;
     public bool Enabled { get; set; } = true;
     public string Source { get; set; } = "manual";
     public long CreatedAt { get; set; }
@@ -28,6 +32,7 @@ public sealed class ChangeRecord
     [JsonPropertyName("op")] public string Op { get; set; } = "upsert";   // upsert | delete
     [JsonPropertyName("text")] public string Text { get; set; } = "";
     [JsonPropertyName("code")] public string Code { get; set; } = "";
+    [JsonPropertyName("abbr")] public string Abbr { get; set; } = "";
     [JsonPropertyName("rank")] public int Rank { get; set; }
     [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
     [JsonPropertyName("source")] public string Source { get; set; } = "manual";
@@ -65,6 +70,7 @@ CREATE TABLE IF NOT EXISTS phrases (
   text        TEXT NOT NULL,
   text_key    TEXT,
   code        TEXT NOT NULL,
+  abbr        TEXT NOT NULL DEFAULT '',
   rank        INTEGER NOT NULL DEFAULT 1,
   enabled     INTEGER NOT NULL DEFAULT 1,
   source      TEXT NOT NULL DEFAULT 'manual',
@@ -78,6 +84,54 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
         cmd.ExecuteNonQuery();
 
         MigrateTextKey();
+        MigrateAbbr();
+    }
+
+    /// <summary>
+    /// 补 abbr 列并回填简拼。
+    ///
+    /// 老库只有全拼编码，输入法里打首字母命中不了自定义词，
+    /// 这里给每条活记录算出首字母简拼补上。
+    /// </summary>
+    private void MigrateAbbr()
+    {
+        var hasColumn = false;
+        using (var check = _conn.CreateCommand())
+        {
+            check.CommandText = "PRAGMA table_info(phrases)";
+            using var r = check.ExecuteReader();
+            while (r.Read())
+                if (string.Equals(r.GetString(1), "abbr", StringComparison.OrdinalIgnoreCase))
+                    hasColumn = true;
+        }
+
+        if (!hasColumn)
+        {
+            using var alter = _conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE phrases ADD COLUMN abbr TEXT NOT NULL DEFAULT ''";
+            alter.ExecuteNonQuery();
+        }
+
+        var needFill = new List<(string Id, string Text, string Code)>();
+        using (var read = _conn.CreateCommand())
+        {
+            read.CommandText = "SELECT id, text, code FROM phrases WHERE deleted=0 AND COALESCE(abbr,'')=''";
+            using var r = read.ExecuteReader();
+            while (r.Read())
+                needFill.Add((r.GetString(0), r.GetString(1), r.GetString(2)));
+        }
+
+        foreach (var row in needFill)
+        {
+            var abbr = PinyinEncoder.AbbreviationOf(row.Text);
+            if (abbr.Length == 0 || abbr == row.Code) continue;
+
+            using var update = _conn.CreateCommand();
+            update.CommandText = "UPDATE phrases SET abbr=$a WHERE id=$id";
+            update.Parameters.AddWithValue("$a", abbr);
+            update.Parameters.AddWithValue("$id", row.Id);
+            update.ExecuteNonQuery();
+        }
     }
 
     /// <summary>
@@ -138,8 +192,32 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
         var keepIds = keep.Values.Select(v => v.Id).ToHashSet(StringComparer.Ordinal);
         var toDelete = rows.Where(r => !keepIds.Contains(r.Id)).Select(r => r.Id).ToList();
 
+        // 先拆唯一索引再改数据。
+        // 保留行的目标 key 可能正被「待删除的行」占着，先改 key 会撞唯一约束，
+        // 表现为启动时报 UNIQUE constraint failed: phrases.text_key（踩过）。
+        DropTextKeyIndex();
+
         using var tx = _conn.BeginTransaction();
 
+        // 1) 先把所有活记录的 key 清空，腾出位置
+        using (var clear = _conn.CreateCommand())
+        {
+            clear.Transaction = tx;
+            clear.CommandText = "UPDATE phrases SET text_key=NULL WHERE deleted=0";
+            clear.ExecuteNonQuery();
+        }
+
+        // 2) 删掉同一个词的多余行
+        foreach (var id in toDelete)
+        {
+            using var del = _conn.CreateCommand();
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM phrases WHERE id=$id";
+            del.Parameters.AddWithValue("$id", id);
+            del.ExecuteNonQuery();
+        }
+
+        // 3) 给留下的行写回 key
         foreach (var kv in keep)
         {
             using var update = _conn.CreateCommand();
@@ -149,33 +227,28 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
             update.Parameters.AddWithValue("$id", kv.Value.Id);
             update.ExecuteNonQuery();
         }
-
-        foreach (var id in toDelete)
-        {
-            using var del = _conn.CreateCommand();
-            del.Transaction = tx;
-            del.CommandText = "DELETE FROM phrases WHERE id=$id";
-            del.Parameters.AddWithValue("$id", id);
-            del.ExecuteNonQuery();
-        }
         tx.Commit();
 
-        // 唯一索引只约束「活着」的行：墓碑可以和别的行同 key，
-        // 否则删掉的词会挡住同名新词。
+        // 4) 重建唯一索引：只约束「活着」的行，
+        //    墓碑可以和别的行同 key，否则删掉的词会挡住同名新词。
         try
         {
-            using var drop = _conn.CreateCommand();
-            drop.CommandText = "DROP INDEX IF EXISTS idx_phrases_text_key";
-            drop.ExecuteNonQuery();
-
             using var idx = _conn.CreateCommand();
             idx.CommandText =
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_phrases_text_key_live ON phrases(text_key) WHERE deleted=0";
             idx.ExecuteNonQuery();
         }
-        catch { /* 建不了唯一索引时，唯一性仍由 Add 的检查保证 */ }
+        catch { /* 建不了时唯一性仍由 Add 的检查保证，不阻断启动 */ }
+    }
 
-
+    private void DropTextKeyIndex()
+    {
+        foreach (var name in new[] { "idx_phrases_text_key", "idx_phrases_text_key_live" })
+        {
+            using var drop = _conn.CreateCommand();
+            drop.CommandText = $"DROP INDEX IF EXISTS {name}";
+            drop.ExecuteNonQuery();
+        }
     }
 
     // ---------- 读 ----------
@@ -184,8 +257,8 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = includeDeleted
-            ? "SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted FROM phrases ORDER BY created_at"
-            : "SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted FROM phrases WHERE deleted=0 ORDER BY created_at";
+            ? "SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted,COALESCE(abbr,'') FROM phrases ORDER BY created_at"
+            : "SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted,COALESCE(abbr,'') FROM phrases WHERE deleted=0 ORDER BY created_at";
         using var r = cmd.ExecuteReader();
         var list = new List<Phrase>();
         while (r.Read())
@@ -200,7 +273,8 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
                 CreatedAt = r.GetInt64(6),
                 UpdatedAt = r.GetInt64(7),
                 Rev = r.GetInt32(8),
-                Deleted = r.GetInt32(9) != 0
+                Deleted = r.GetInt32(9) != 0,
+                Abbr = r.GetString(10)
             });
         return list;
     }
@@ -217,7 +291,7 @@ CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
         if (key.Length == 0) return null;
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = @"
-SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted
+SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted,COALESCE(abbr,'')
 FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
         cmd.Parameters.AddWithValue("$k", key);
         using var r = cmd.ExecuteReader();
@@ -233,7 +307,8 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
             CreatedAt = r.GetInt64(6),
             UpdatedAt = r.GetInt64(7),
             Rev = r.GetInt32(8),
-            Deleted = r.GetInt32(9) != 0
+            Deleted = r.GetInt32(9) != 0,
+            Abbr = r.GetString(10)
         };
     }
 
@@ -267,7 +342,7 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
     // ---------- 写 ----------
 
     /// <summary>新增词条并落日志。已存在同 (词条, 编码) 时直接返回既有条目。</summary>
-    public Phrase Add(string text, string code, int rank = 1, string source = "manual", bool enabled = true)
+    public Phrase Add(string text, string code, int rank = 1, string source = "manual", bool enabled = true, string? abbr = null)
     {
         if (!IsValidCode(code))
             throw new ArgumentException($"编码 '{code}' 不合法：只允许 a-z 和 '，长度 1..32", nameof(code));
@@ -284,6 +359,7 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
             Id = NewId(),
             Text = text,
             Code = code,
+            Abbr = abbr ?? PinyinEncoder.AbbreviationOf(text),
             Rank = Math.Clamp(rank, Mschxudp.MinOrder, Mschxudp.MaxOrder),
             Enabled = enabled,
             Source = source,
@@ -299,6 +375,7 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
             Op = "upsert",
             Text = phrase.Text,
             Code = phrase.Code,
+            Abbr = phrase.Abbr,
             Rank = phrase.Rank,
             Enabled = phrase.Enabled,
             Source = phrase.Source,
@@ -324,6 +401,7 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
             Op = "delete",
             Text = existing.Text,
             Code = existing.Code,
+            Abbr = existing.Abbr,
             Rank = existing.Rank,
             Ts = now,
             Dev = DeviceId.Value
@@ -342,15 +420,18 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
 
         using var up = _conn.CreateCommand();
         up.CommandText = @"
-INSERT INTO phrases(id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted)
-VALUES($id,$text,$code,$rank,$enabled,$source,$ts,$ts,$rev,$del)
+INSERT INTO phrases(id,text,text_key,code,abbr,rank,enabled,source,created_at,updated_at,rev,deleted)
+VALUES($id,$text,$tkey,$code,$abbr,$rank,$enabled,$source,$ts,$ts,$rev,$del)
 ON CONFLICT(id) DO UPDATE SET
-  text=excluded.text, code=excluded.code, rank=excluded.rank,
+  text=excluded.text, text_key=excluded.text_key, code=excluded.code,
+  abbr=excluded.abbr, rank=excluded.rank,
   enabled=excluded.enabled, source=excluded.source,
   updated_at=excluded.updated_at, rev=excluded.rev, deleted=excluded.deleted";
         up.Parameters.AddWithValue("$id", c.Id);
         up.Parameters.AddWithValue("$text", c.Text);
+        up.Parameters.AddWithValue("$tkey", NormalizeText(c.Text));
         up.Parameters.AddWithValue("$code", c.Code);
+        up.Parameters.AddWithValue("$abbr", c.Abbr ?? "");
         up.Parameters.AddWithValue("$rank", c.Rank);
         up.Parameters.AddWithValue("$enabled", c.Enabled ? 1 : 0);
         up.Parameters.AddWithValue("$source", c.Source);
@@ -364,15 +445,18 @@ ON CONFLICT(id) DO UPDATE SET
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = @"
-INSERT INTO phrases(id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted)
-VALUES($id,$text,$code,$rank,$enabled,$source,$created,$updated,$rev,$del)
+INSERT INTO phrases(id,text,text_key,code,abbr,rank,enabled,source,created_at,updated_at,rev,deleted)
+VALUES($id,$text,$tkey,$code,$abbr,$rank,$enabled,$source,$created,$updated,$rev,$del)
 ON CONFLICT(id) DO UPDATE SET
-  text=excluded.text, code=excluded.code, rank=excluded.rank,
+  text=excluded.text, text_key=excluded.text_key, code=excluded.code,
+  abbr=excluded.abbr, rank=excluded.rank,
   enabled=excluded.enabled, source=excluded.source,
   updated_at=excluded.updated_at, rev=excluded.rev, deleted=excluded.deleted";
         cmd.Parameters.AddWithValue("$id", p.Id);
         cmd.Parameters.AddWithValue("$text", p.Text);
+        cmd.Parameters.AddWithValue("$tkey", NormalizeText(p.Text));
         cmd.Parameters.AddWithValue("$code", p.Code);
+        cmd.Parameters.AddWithValue("$abbr", p.Abbr ?? "");
         cmd.Parameters.AddWithValue("$rank", p.Rank);
         cmd.Parameters.AddWithValue("$enabled", p.Enabled ? 1 : 0);
         cmd.Parameters.AddWithValue("$source", p.Source);
@@ -422,7 +506,13 @@ ON CONFLICT(id) DO UPDATE SET
 
     // ---------- 投影 ----------
 
-    /// <summary>把母库投影成候选条目：可用的词条 + 编码合法 + 词面长度合法。</summary>
+    /// <summary>
+    /// 把母库投影成要写入输入法的条目。
+    ///
+    /// 母库里一个词一条（全拼编码 + 简拼编码），投到输入法时展开成两条记录：
+    /// 打全拼命中的一条、打首字母命中的一条。
+    /// 输入法只认字面完全相同的编码，不会自己把 zhiruirui 映射到 zrr，所以两条都得写。
+    /// </summary>
     public List<PhraseEntry> Project(int maxEntries = 2000)
     {
         var outp = new List<PhraseEntry>();
@@ -432,8 +522,18 @@ ON CONFLICT(id) DO UPDATE SET
             if (p.Code.Length > Mschxudp.MaxCodeLength) continue;
             if (p.Text.Length > Mschxudp.MaxWordLength) continue;
             if (p.Code.Length == 0) continue;
+
             outp.Add(new PhraseEntry(p.Code, p.Text, p.Rank));
             if (outp.Count >= maxEntries) break;
+
+            var abbr = p.Abbr;
+            if (abbr.Length > 0
+                && abbr.Length <= Mschxudp.MaxCodeLength
+                && !string.Equals(abbr, p.Code, StringComparison.Ordinal))
+            {
+                outp.Add(new PhraseEntry(abbr, p.Text, p.Rank, isAbbr: true));
+                if (outp.Count >= maxEntries) break;
+            }
         }
         return outp;
     }

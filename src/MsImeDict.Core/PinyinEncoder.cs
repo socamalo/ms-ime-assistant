@@ -91,9 +91,10 @@ public sealed class PinyinEncoder
 
         // 只产出全拼一条。
         //
-        // 简拼（每字首字母）不单独写：同一个词挂两条码会让词库翻倍，
-        // 而且输入法自己会把「打首字母」映射到候选，不需要我们替它建别名。
-        // 需要别名时，在词库管理界面用「新增词条 + 指定编码」手工加。
+        // 简拼不放在这里生成：母库里一个词只存一条全拼记录，
+        // 简拼由 AbbreviationOf 单独算出来存到 abbr 列，
+        // 部署时以第二条记录写进输入法（见 PhraseStore.Project）。
+        // 这样母库是「一词一条」，输入法里是「一个词两条编码」。
         var hasChinese = usableParts.Any(p => p.IsChinese);
         var codes = new List<string>();
         foreach (var f in full)
@@ -132,6 +133,41 @@ public sealed class PinyinEncoder
             CandidateCodes = codes,
             Notes = notes
         };
+    }
+
+    /// <summary>
+    /// 取词条的首字母简拼（每字一个字母），如「智睿瑞」→ zrr。
+    ///
+    /// 输入法不会自己把全拼条目映射到首字母，实测打 zrr 只有系统词，
+    /// 自定义词必须单独挂一条简拼码。返回空串表示这个词不配简拼：
+    ///   - 单字词只有一个字母，会把整个字母的候选表顶掉
+    ///   - u / v 开头会撞输入法模式键
+    ///   - 有字取不到读音
+    /// </summary>
+    public static string AbbreviationOf(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+
+        var parts = SplitParts(text);
+        if (parts.Count < 2) return "";
+
+        var sb = new StringBuilder();
+        foreach (var part in parts)
+        {
+            if (!part.IsChinese) { sb.Append(part.Text[0]); continue; }
+
+            var readings = PinyinTable.Readings(part.Text[0]);
+            if (readings.Length == 0) return "";
+            sb.Append(readings[0][0]);
+        }
+
+        var abbr = sb.ToString();
+        if (abbr.Length < 2 || abbr.Length > Mschxudp.MaxCodeLength) return "";
+
+        // 与全拼同样的限制：u / v 开头会被输入法当成模式键
+        if (abbr[0] == 'u' || abbr[0] == 'v') return "";
+
+        return abbr;
     }
 
     private static List<(string Text, bool IsChinese)> SplitParts(string text)

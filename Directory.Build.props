@@ -1,14 +1,24 @@
 <Project>
+
+  <!--
+    版本号唯一来源。发版流程：
+      1. 改这里的 Version
+      2. 在 CHANGELOG.md 顶部加一节「## [x.y.z] - yyyy-mm-dd」
+      3. commit，然后 git tag -a vx.y.z -m "vx.y.z"
+      4. 打包上传到 GitHub Release，Release 说明直接复制 CHANGELOG 里那一节
+
+    版本语义（语义化版本 SemVer）：
+      主版本 不兼容变更（词库格式、同步协议不可回退）
+      次版本 向下兼容的新功能（新增命令、新增字段）
+      修订号 向下兼容的修复（bug fix、文案、性能）
+  -->
   <PropertyGroup>
-    <Company>Daniel Ding</Company>
+    <Version>0.2.0</Version>
     <Product>微软输入法助手</Product>
-    <AssemblyTitle>微软输入法助手</AssemblyTitle>
-    <FileDescription>微软输入法助手</FileDescription>
-    <Authors>Daniel Ding</Authors>
-    <Copyright>© 2026 Daniel Ding &lt;flaming.ding@gmail.com&gt;</Copyright>
-    <Version>0.1.0</Version>
-    <NeutralLanguage>zh-Hans</NeutralLanguage>
-    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Company>ms-ime-assistant</Company>
+    <Copyright>Copyright (c) 2026 Daniel Ding</Copyright>
+    <!-- 版本字符串里不要带 git sha，保证同一个 tag 编出来的包版本一致 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
 </Project>
