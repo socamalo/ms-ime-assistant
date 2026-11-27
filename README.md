@@ -4,7 +4,7 @@
 
 选中文字 → 一键入词 → 立刻能打出来；词库存在你自己的私有 Git 仓库里，示例词一句话拉回来。
 
-当前版本 **v0.2.4**　·　更新记录见 [CHANGELOG.md](CHANGELOG.md)
+当前版本 **v0.2.5**　·　更新记录见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 

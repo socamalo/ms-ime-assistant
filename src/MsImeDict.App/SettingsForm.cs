@@ -17,10 +17,10 @@ public sealed class SettingsForm : Form
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
     private readonly AppSettings _settings;
-    private readonly CheckBox _ctrl = new() { Text = "Ctrl", Width = 58 };
-    private readonly CheckBox _alt = new() { Text = "Alt", Width = 52 };
-    private readonly CheckBox _shift = new() { Text = "Shift", Width = 60 };
-    private readonly CheckBox _win = new() { Text = "Win", Width = 56 };
+    private readonly CheckBox _ctrl = new() { Text = "Ctrl", AutoSize = true };
+    private readonly CheckBox _alt = new() { Text = "Alt", AutoSize = true };
+    private readonly CheckBox _shift = new() { Text = "Shift", AutoSize = true };
+    private readonly CheckBox _win = new() { Text = "Win", AutoSize = true };
     private readonly ComboBox _keyBox = new() { Width = 90, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _preview = new() { AutoSize = true, ForeColor = Color.FromArgb(30, 60, 110) };
 
