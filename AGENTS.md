@@ -158,14 +158,50 @@ cmd /c "tools\msimdict.cmd verify"
 
 ### 5.3 版本号与发版（用户要求「专业地更新版本」）
 
-1. 版本号唯一来源：根目录 `Directory.Build.props` 的 `<Version>`。
-   代码里读 `AppInfo.Version`，不要在别处硬编码。
-2. 语义化版本：主版本=不兼容（词库格式/同步协议），次版本=兼容的新功能，
-   修订号=兼容的修复。
-3. 在 `CHANGELOG.md` 顶部加一节 `## [x.y.z] - yyyy-mm-dd`，
-   写清**改了什么、为什么改、升级要注意什么**。这一节就是 Release 说明的原文。
-4. `git tag -a vx.y.z -m "vx.y.z"`，再打包上传 GitHub Release。
-5. 功能还没验证通过时**不要打 tag**。打上就等于对外声称可用。
+版本号唯一来源：根目录 `Directory.Build.props` 的 `<Version>`。
+代码里读 `AppInfo.Version`，不要在别处硬编码。
+语义化版本：主版本=不兼容（词库格式/同步协议），次版本=兼容的新功能，
+修订号=兼容的修复。
+
+**发版只有一条命令，不要手工拼步骤：**
+
+```powershell
+# 1. 改 Directory.Build.props 的 <Version>
+# 2. 在 CHANGELOG.md 顶部加一节「## [x.y.z] - yyyy-mm-dd」
+# 3. 先空跑，确认包和说明都对
+powershell -ExecutionPolicy Bypass -File tools\release.ps1 -DryRun
+# 4. 正式发
+powershell -ExecutionPolicy Bypass -File tools\release.ps1
+```
+
+`tools/release.ps1` 会依次做：
+
+| 步骤 | 失败就停 |
+|---|---|
+| 从 `Directory.Build.props` 读版本号 | 读不到就不发 |
+| 检查本地 tag 是否已存在 | 同一个版本号只能发一次 |
+| 跑 15 项自检 | 不全绿不发布 |
+| `dotnet publish` 自包含 win-x64 包 | 发布失败就停 |
+| 包内体检：README 无真名、README 版本号、exe 版本号 | 三项任一不符就停 |
+| 打 tag `vx.y.z` 并推送 | 失败就停 |
+| Release 说明取 `CHANGELOG.md` 对应那一节 | 缺那一节就停 |
+| `gh release create` 上传资产 | 失败时 tag 已推，重跑上传即可 |
+
+发完核对三件事：
+
+```powershell
+gh release list                       # 新版本在最上面，标记 Latest
+gh release view vx.y.z --json assets  # 资产大小与本地 zip 一致
+gh release view vx.y.z -q .body       # 说明就是 CHANGELOG 那一节
+```
+
+规矩：
+
+- 功能没验证通过时**不打 tag**。打上就等于对外声称可用。
+- Release 说明不要另写一份，直接取 CHANGELOG，避免两处口径打架。
+- 资产名固定 `msimdict-app-win-x64.zip`，换名字会让旧文档的下载链接失效。
+- 打错 tag 的处置：删远端与本地 tag、删 Release，改版本号后重发；
+  已经有人下载过的版本号不要重用。
 
 ### 5.4 提交
 
@@ -189,10 +225,11 @@ cmd /c "tools\msimdict.cmd verify"
 
 | 事项 | 状态 |
 |---|---|
-| 简拼编码是否必须带撇号（`c's'j` vs `csj`） | 等用户敲 `csj` 报结果 |
-| `v0.2.0` 的 tag 与 Release | 简拼结论确定后再打 |
+| 简拼编码是否必须带撇号（`c's'j` vs `csj`） | 等用户敲 `csj` 报结果；已写进 0.2.0 的「已知问题」，确认后发 0.2.1 |
 | 词库里「源码里搜」`yuanmalisou` 是否为误捕获 | 待用户确认是否删除 |
 | 误建的空仓库 `socamalo/-` | 需要用户 `gh auth refresh -s delete_repo` 后才能删 |
+
+已发布：`v0.1.0`（2026-11-26）、`v0.2.0`（2026-11-27，当前 Latest）。
 
 ---
 
