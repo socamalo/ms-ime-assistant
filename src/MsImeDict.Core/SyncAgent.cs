@@ -6,8 +6,12 @@ namespace MsImeDict.Core;
 /// <summary>同步设置。</summary>
 public sealed class SyncSettings
 {
-    /// <summary>私有仓库的本地工作副本目录。</summary>
-    public string RepoPath { get; set; } = "";
+    /// <summary>
+    /// 私有仓库的本机工作副本。固定在运行时目录下（`%LOCALAPPDATA%\MsImeDict\sync-repo`），
+    /// 由程序自己 clone / init / commit / push，不开放配置。
+    /// </summary>
+    public string RepoPath => Path.Combine(Paths.AppDataDir, "sync-repo");
+
     /// <summary>私有仓库远端地址（git URL）。</summary>
     public string RemoteUrl { get; set; } = "";
     public string Branch { get; set; } = "main";
@@ -15,10 +19,6 @@ public sealed class SyncSettings
 
     /// <summary>本机的可同步设置。为空时不同步设置。</summary>
     public PortableSettings? LocalSettings { get; set; }
-
-    public string EffectiveRepoPath => string.IsNullOrWhiteSpace(RepoPath)
-        ? Path.Combine(Paths.AppDataDir, "sync-repo")
-        : RepoPath;
 }
 
 /// <summary>同步结果。</summary>
@@ -62,7 +62,7 @@ public sealed class SyncAgent
             return result;
         }
 
-        var repo = settings.EffectiveRepoPath;
+        var repo = settings.RepoPath;
         if (string.IsNullOrWhiteSpace(settings.RemoteUrl))
         {
             result.Ok = false;

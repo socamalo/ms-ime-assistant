@@ -4,7 +4,7 @@
 
 选中文字 → 一键入词 → 立刻能打出来；词库存在你自己的私有 Git 仓库里，示例词一句话拉回来。
 
-当前版本 **v0.2.3**　·　更新记录见 [CHANGELOG.md](CHANGELOG.md)
+当前版本 **v0.2.4**　·　更新记录见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -318,15 +318,16 @@ Start-Process "$dir\msimdict-app.exe"
 ```json
 {
   "Hotkey": "Ctrl+Q",
-  "DefaultRank": 2,
   "AutoDeploy": true,
   "AutoStart": true,
   "SyncEnabled": true,
-  "RepoPath": "%LOCALAPPDATA%\\MsImeDict\\sync-repo",
   "RemoteUrl": "https://github.com/你的用户名/仓库名",
   "Branch": "main"
 }
 ```
+
+同步用的本机工作副本固定放在 `%LOCALAPPDATA%\MsImeDict\sync-repo`，
+由程序自己 clone / commit / push，不设配置项。
 
 改完必须重启进程才生效：`Stop-Process -Name msimdict-app -Force; Start-Process "$dir\msimdict-app.exe"`。
 

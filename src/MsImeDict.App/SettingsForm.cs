@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 using MsImeDict.Core;
 
@@ -26,7 +27,6 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _syncEnabled;
     private readonly CheckBox _autoStart;
     private readonly TextBox _remoteUrl;
-    private readonly TextBox _repoPath;
 
     /// <summary>用户点了「保存并同步」。</summary>
     public bool SyncRequested { get; private set; }
@@ -40,7 +40,7 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(600, 420);
+        ClientSize = new Size(600, 368);
         Font = new Font("Microsoft YaHei UI", 9f);
 
         var layout = new TableLayoutPanel
@@ -117,20 +117,16 @@ public sealed class SettingsForm : Form
             PlaceholderText = "https://github.com/用户名/仓库名"
         };
         layout.Controls.Add(_remoteUrl, 1, 4);
-        layout.Controls.Add(MakeHint("贴一个空的私有仓库地址。首次同步会自己初始化、推送，之后双向合并。"), 1, 5);
-
-        layout.Controls.Add(MakeLabel("工作目录"), 0, 6);
-        _repoPath = new TextBox { Text = settings.RepoPath, Dock = DockStyle.Fill };
-        layout.Controls.Add(_repoPath, 1, 6);
-        layout.Controls.Add(MakeHint("本机 git 工作副本。留空用 %LOCALAPPDATA%\\MsImeDict\\sync-repo。"), 1, 7);
+        layout.Controls.Add(MakeHint("贴一个空的私有仓库地址。首次同步会自己 clone 或初始化、推送，之后双向合并。"), 1, 5);
 
         var footer = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 38,
+            Height = 52,
             Padding = new Padding(16, 2, 16, 0),
             ForeColor = Color.Gray,
-            Text = "备份目录：" + Paths.BackupDir
+            Text = "备份目录：" + Paths.BackupDir + Environment.NewLine
+                 + "同步工作副本：" + Path.Combine(Paths.AppDataDir, "sync-repo")
         };
 
         var buttons = new FlowLayoutPanel
@@ -258,7 +254,6 @@ public sealed class SettingsForm : Form
         _settings.SyncEnabled = _syncEnabled.Checked;
         _settings.AutoStart = _autoStart.Checked;
         _settings.RemoteUrl = url;
-        _settings.RepoPath = _repoPath.Text.Trim();
         _settings.Save();
 
         AutoStart.Apply(_settings.AutoStart);

@@ -15,7 +15,8 @@ public sealed class AppSettings
     /// <summary>开机自动启动（写 HKCU 的 Run 键）。</summary>
     public bool AutoStart { get; set; }
     public bool SyncEnabled { get; set; }
-    public string RepoPath { get; set; } = "";
+
+    /// <summary>私有仓库远端地址。本机工作副本固定放在 AppDataDir\sync-repo，不开放配置。</summary>
     public string RemoteUrl { get; set; } = "";
     public string Branch { get; set; } = "main";
 

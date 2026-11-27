@@ -406,9 +406,9 @@ public static class Program
     private static int Sync()
     {
         var settings = ConfigFile.LoadSync();
-        if (!settings.Enabled || string.IsNullOrWhiteSpace(settings.RepoPath))
+        if (!settings.Enabled || string.IsNullOrWhiteSpace(settings.RemoteUrl))
         {
-            Console.Error.WriteLine("同步未配置。在 settings.json 里设置 SyncEnabled=true、RepoPath、RemoteUrl。");
+            Console.Error.WriteLine("同步未配置。在 settings.json 里把 SyncEnabled 设为 true，并填 RemoteUrl。");
             Console.Error.WriteLine("settings 路径：" + Paths.SettingsFile);
             return 1;
         }

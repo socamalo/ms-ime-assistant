@@ -364,7 +364,6 @@ public sealed class TrayHost
                 var result = new SyncAgent(_store).Sync(new Core.SyncSettings
                 {
                     Enabled = _settings.SyncEnabled,
-                    RepoPath = _settings.RepoPath,
                     RemoteUrl = _settings.RemoteUrl,
                     Branch = _settings.Branch,
                     LocalSettings = _settings.ToPortable()
@@ -408,7 +407,6 @@ public sealed class TrayHost
                 var result = new SyncAgent(_store).Sync(new Core.SyncSettings
                 {
                     Enabled = _settings.SyncEnabled,
-                    RepoPath = _settings.RepoPath,
                     RemoteUrl = _settings.RemoteUrl,
                     Branch = _settings.Branch,
                     LocalSettings = _settings.ToPortable()

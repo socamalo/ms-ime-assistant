@@ -18,7 +18,6 @@ public static class ConfigFile
             var root = doc.RootElement;
 
             settings.Enabled = GetBool(root, "SyncEnabled");
-            settings.RepoPath = GetString(root, "RepoPath");
             settings.RemoteUrl = GetString(root, "RemoteUrl");
             var branch = GetString(root, "Branch");
             if (!string.IsNullOrWhiteSpace(branch)) settings.Branch = branch;

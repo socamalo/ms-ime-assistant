@@ -40,13 +40,13 @@ sqlite 是二进制页结构，每次写入整文件变化，两台机器同时�
 ```json
 {
   "SyncEnabled": true,
-  "RepoPath": "%LOCALAPPDATA%\\MsImeDict\\sync-repo",
   "RemoteUrl": "file:///C:/Users/<你>/ms-ime-dict-data.git",
   "Branch": "main"
 }
 ```
 
-- `RepoPath` 是本机的工作副本，程序自己会在里面 `git init` / commit / push
+- 本机工作副本固定放在 `%LOCALAPPDATA%\MsImeDict\sync-repo`，程序自己在里面
+  `clone` / `git init` / commit / push。这是程序的运行时目录，不是用户可配的路径。
 - `RemoteUrl` 先填本地裸库地址也能跑通，验证完换成 GitHub 即可
 
 ## 本地跑通（不需要联网）
