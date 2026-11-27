@@ -409,7 +409,13 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
         return true;
     }
 
-    /// <summary>把一条变更套用到库中（同 id 取 rev 大者）。</summary>
+    /// <summary>
+    /// 把一条变更套用到库中（同 id 取 rev 大者）。
+    ///
+    /// 跨设备合并时，同一台设备可能收到两条「不同 id、同一个词」的记录
+    /// （两台机器各自加了一次），而词条唯一索引只允许一条活记录。
+    /// 这里用 (更新时间, id) 决定留哪条：规则确定，两端算出来的结果一致。
+    /// </summary>
     public void ApplyChange(ChangeRecord c)
     {
         using var cmd = _conn.CreateCommand();
@@ -417,6 +423,24 @@ FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
         cmd.Parameters.AddWithValue("$id", c.Id);
         var existingRev = cmd.ExecuteScalar();
         if (existingRev is not null && Convert.ToInt32(existingRev) >= c.Rev) return;
+
+        var key = NormalizeText(c.Text);
+        if (c.Op != "delete" && key.Length > 0)
+        {
+            var rival = FindLiveRival(key, c.Id);
+            if (rival is not null)
+            {
+                var incomingWins = c.Ts > rival.UpdatedAt
+                                   || (c.Ts == rival.UpdatedAt && string.CompareOrdinal(c.Id, rival.Id) > 0);
+                if (!incomingWins) return;
+
+                // 对方让位：标记成已删除，不再参与唯一索引
+                using var bury = _conn.CreateCommand();
+                bury.CommandText = "UPDATE phrases SET deleted=1 WHERE id=$id";
+                bury.Parameters.AddWithValue("$id", rival.Id);
+                bury.ExecuteNonQuery();
+            }
+        }
 
         using var up = _conn.CreateCommand();
         up.CommandText = @"
@@ -440,6 +464,10 @@ ON CONFLICT(id) DO UPDATE SET
         up.Parameters.AddWithValue("$del", c.Op == "delete" ? 1 : 0);
         up.ExecuteNonQuery();
     }
+
+    /// <summary>找到另一个 id、同名词、还活着的记录（不含自己）。</summary>
+    private Phrase? FindLiveRival(string key, string exceptId)
+        => List().FirstOrDefault(p => p.Id != exceptId && NormalizeText(p.Text) == key);
 
     private void Upsert(Phrase p)
     {

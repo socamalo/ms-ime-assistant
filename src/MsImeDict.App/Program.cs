@@ -97,7 +97,7 @@ public sealed class TrayHost
         Log.Write($"start: hotkey={_settings.Hotkey}, 取词=选区(UIA)+剪贴板(只读)");
 
         // 划词浮条：只读选区，不干预任何应用
-        _bar.AddRequested += text => AddPhrase(text, openDialog: false);
+        _bar.AddRequested += text => AddPhrase(text, openDialog: false, source: "selection");
         _mouse.DragSelected += OnDragSelected;
         Log.Write($"mouse hook started={_mouse.Start()}");
     }
@@ -183,12 +183,12 @@ public sealed class TrayHost
             return;
         }
 
-        AddPhrase(text.Trim(), openDialog: false);
+        AddPhrase(text.Trim(), openDialog: false, source: "clipboard");
     }
 
     // ---------- 加词 ----------
 
-    private void AddPhrase(string text, bool openDialog)
+    private void AddPhrase(string text, bool openDialog, string source)
     {
         try
         {
@@ -222,7 +222,7 @@ public sealed class TrayHost
 
             if (openDialog)
             {
-                using var form = new AddPhraseForm(text, info, _settings.DefaultRank);
+                using var form = new AddPhraseForm(text, info, 1);
                 if (form.ShowDialog() != DialogResult.OK) return;
 
                 word = form.Word;
@@ -240,7 +240,10 @@ public sealed class TrayHost
                 word = text;
                 code = info.Codes.FirstOrDefault() ?? "";
                 abbr = PinyinEncoder.AbbreviationOf(word);
-                rank = _settings.DefaultRank;
+
+                // 候选位恒为 1：用户自己加的词没理由排在后面，词频由输入法自己调。
+                // 这里曾是可配置项，配置被同步到另一台设备后新词掉到了第 2 位（踩过）。
+                rank = 1;
             }
 
             if (code.Length == 0)
@@ -249,7 +252,7 @@ public sealed class TrayHost
                 return;
             }
 
-            var phrase = _store.Add(word, code, rank, source: "clipboard", abbr: abbr);
+            var phrase = _store.Add(word, code, rank, source: source, abbr: abbr);
 
             var result = new ImeDeployer().Deploy(_store.Project());
             if (!result.Ok)
@@ -259,7 +262,7 @@ public sealed class TrayHost
             }
 
             var abbrShown = phrase.Abbr.Length == 0 ? "无简拼" : phrase.Abbr;
-            Log.Write($"added: {word} -> {code} / {abbrShown}");
+            Log.Write($"added: {word} -> {code} / {abbrShown}  (source={source})");
             Post(() => _toast.ShowToast($"「{Shorten(word)}」已加入词典"));
             if (_settings.SyncEnabled) SyncInBackground();
         }

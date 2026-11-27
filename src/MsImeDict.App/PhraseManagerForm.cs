@@ -34,8 +34,7 @@ public sealed class PhraseManagerForm : Form
         _list.Columns.Add("编码", 160);
         _list.Columns.Add("简拼编码", 120);
         _list.Columns.Add("候选位", 60, HorizontalAlignment.Center);
-        _list.Columns.Add("来源", 70);
-        _list.Columns.Add("加入时间", 130);
+        _list.Columns.Add("加入时间", 140);
 
         var toolbar = new FlowLayoutPanel
         {
@@ -97,7 +96,6 @@ public sealed class PhraseManagerForm : Form
             item.SubItems.Add(p.Code);
             item.SubItems.Add(p.Abbr.Length == 0 ? "（无）" : p.Abbr);
             item.SubItems.Add(p.Rank.ToString());
-            item.SubItems.Add(p.Source);
             item.SubItems.Add(DateTimeOffset.FromUnixTimeSeconds(p.CreatedAt).ToLocalTime().ToString("MM-dd HH:mm"));
             _list.Items.Add(item);
         }

@@ -36,6 +36,7 @@ public static class Program
                 "encode" => Encode(rest),
                 "list" => ListCmd(),
                 "add" => Add(rest),
+                "edit" => Edit(rest),
                 "remove" => Remove(rest),
                 "preview" => Preview(),
                 "deploy" => Deploy(),
@@ -74,6 +75,12 @@ public static class Program
                  --code <编码>       指定全拼编码（不给就自动生成）
                  --rank <1-9>       指定候选位，默认 1
                  --no-deploy         只入库，不写输入法
+          edit <词条> [选项]          改已有词条（候选位/编码/简拼/来源/启停）
+                 --rank <1-9>       候选位
+                 --code <编码>       全拼编码
+                 --abbr <编码>       简拼编码，给空串表示不要简拼
+                 --source <来源>     来源标记（selection / clipboard / manual / cli）
+                 --enable / --disable  启用或停用
           remove <id>               删除词条并部署
           preview                   预览将要写入的内容
           deploy                    把母库投影写入输入法
@@ -231,6 +238,75 @@ public static class Program
         using var store = new PhraseStore();
         if (!store.Remove(rest[0])) { Console.Error.WriteLine($"找不到词条 {rest[0]}"); return 1; }
         Console.WriteLine($"已删除 {rest[0]}");
+        return DoDeploy(store);
+    }
+
+    /// <summary>
+    /// 改已有词条的元数据（候选位、编码、简拼、来源、启用状态）。
+    /// 用来修正历史数据，也是一条变更，会同步到其他设备。
+    /// </summary>
+    private static int Edit(string[] rest)
+    {
+        var opts = ParseOptions(rest, out var positional);
+        if (positional.Count == 0)
+        {
+            Console.Error.WriteLine("用法：edit <词条> [--rank n] [--code x] [--abbr x] [--source s] [--enable|--disable]");
+            return 1;
+        }
+
+        var text = string.Join(' ', positional);
+        using var store = new PhraseStore();
+        var phrase = store.FindByText(text);
+        if (phrase is null) { Console.Error.WriteLine($"找不到词条「{text}」"); return 1; }
+
+        var changed = new List<string>();
+
+        if (opts.TryGetValue("--rank", out var rankText) && int.TryParse(rankText, out var rank))
+        {
+            phrase.Rank = Math.Clamp(rank, Mschxudp.MinOrder, Mschxudp.MaxOrder);
+            changed.Add($"候选位 {phrase.Rank}");
+        }
+
+        if (opts.TryGetValue("--code", out var codeText) && !string.IsNullOrWhiteSpace(codeText))
+        {
+            var code = codeText.Trim().ToLowerInvariant();
+            if (!PhraseStore.IsValidCode(code))
+            {
+                Console.Error.WriteLine($"编码 '{code}' 不合法：只允许 a-z 和 '，长度 1..32");
+                return 1;
+            }
+            phrase.Code = code;
+            changed.Add($"编码 {code}");
+        }
+
+        if (opts.TryGetValue("--abbr", out var abbrText))
+        {
+            phrase.Abbr = abbrText.Trim().ToLowerInvariant();
+            changed.Add($"简拼 {(phrase.Abbr.Length == 0 ? "（无）" : phrase.Abbr)}");
+        }
+
+        if (opts.TryGetValue("--source", out var sourceText) && !string.IsNullOrWhiteSpace(sourceText))
+        {
+            phrase.Source = sourceText.Trim();
+            changed.Add($"来源 {phrase.Source}");
+        }
+
+        if (opts.ContainsKey("--enable")) { phrase.Enabled = true; changed.Add("启用"); }
+        if (opts.ContainsKey("--disable")) { phrase.Enabled = false; changed.Add("停用"); }
+
+        if (changed.Count == 0) { Console.WriteLine("没有要改的内容"); return 0; }
+
+        phrase.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        phrase.Rev++;
+        store.ApplyChange(new ChangeRecord
+        {
+            Id = phrase.Id, Rev = phrase.Rev, Op = "upsert", Text = phrase.Text,
+            Code = phrase.Code, Abbr = phrase.Abbr, Rank = phrase.Rank,
+            Enabled = phrase.Enabled, Source = phrase.Source,
+            Ts = phrase.UpdatedAt, Dev = DeviceId.Value
+        });
+
+        Console.WriteLine($"「{text}」已更新：" + string.Join("，", changed));
         return DoDeploy(store);
     }
 

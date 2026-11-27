@@ -10,7 +10,6 @@ public sealed class AppSettings
 {
     /// <summary>主热键。Ctrl+单字母会在系统层劫持该组合，选一个各软件少用的。</summary>
     public string Hotkey { get; set; } = "Ctrl+Q";
-    public int DefaultRank { get; set; } = 1;
     public bool AutoDeploy { get; set; } = true;
 
     /// <summary>开机自动启动（写 HKCU 的 Run 键）。</summary>
@@ -23,11 +22,10 @@ public sealed class AppSettings
     /// <summary>设置最后修改时间（Unix 秒）。跨设备同步时用它判断谁更新。</summary>
     public long UpdatedAt { get; set; }
 
-    /// <summary>导出可跨设备同步的子集（快捷键、默认候选位、自动部署）。</summary>
+    /// <summary>导出可跨设备同步的子集（快捷键、自动部署）。</summary>
     public PortableSettings ToPortable() => new()
     {
         Hotkey = Hotkey,
-        DefaultRank = DefaultRank,
         AutoDeploy = AutoDeploy,
         UpdatedAt = UpdatedAt
     };
@@ -36,7 +34,6 @@ public sealed class AppSettings
     public void ApplyPortable(PortableSettings p)
     {
         Hotkey = p.Hotkey;
-        DefaultRank = p.DefaultRank;
         AutoDeploy = p.AutoDeploy;
         UpdatedAt = p.UpdatedAt;
     }

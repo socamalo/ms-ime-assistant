@@ -30,6 +30,8 @@ public static class Program
             Run("全拼只产出一条编码", FullPinyinOnly);
             Run("简拼生成规则", AbbreviationRules);
             Run("词条唯一：换编码也拒绝", WordIsUnique);
+            Run("取词来源如实记录", SourceRecorded);
+            Run("设置同步不带候选位", PortableSettingsNoRank);
             Run("删除后同名词可重新添加", ReAddAfterDelete);
             Run("投影展开为全拼 + 简拼", ProjectExpands);
             Run("部署：同码冲突时全拼优先", DeployConflictPrefersFull);
@@ -37,6 +39,7 @@ public static class Program
             Run("老库升级：收敛重复并回填简拼", UpgradeOldDatabase);
             Run("迁移幂等：连开两次不丢数据", MigrationIdempotent);
             Run("变更重放：rev 大者生效", ReplayWins);
+            Run("跨设备同名词合并：只留更新时间新的", MergeSameWord);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed} 项，失败 {Failures.Count} 项");
@@ -209,6 +212,40 @@ public static class Program
         Assert(second.Id == first.Id, "重复添加返回了不同的 id");
         Assert(third.Id == first.Id, "归一化后仍被当成新词");
         Assert(first.Abbr == "zrr", $"简拼未生成：'{first.Abbr}'");
+    }
+
+    /// <summary>划词加的词标成 selection，热键加的标成 clipboard，别混。</summary>
+    private static void SourceRecorded()
+    {
+        var db = TempDb();
+        using var store = new PhraseStore(db);
+
+        store.Add("换电脑", "huandiannao", 1, "selection");
+        store.Add("耗命", "haoming", 1, "clipboard");
+
+        var list = store.List();
+        Assert(list.Single(p => p.Text == "换电脑").Source == "selection", "划词来源被写成了别的");
+        Assert(list.Single(p => p.Text == "耗命").Source == "clipboard", "热键来源被写成了别的");
+
+        // 候选位恒为 1，投影到输入法也是 1
+        var entries = store.Project();
+        Assert(entries.All(e => e.Order == 1), "候选位不是 1：" +
+            string.Join(",", entries.Select(e => $"{e.Code}={e.Order}")));
+    }
+
+    /// <summary>候选位不是可配置项，不能跟着设置同步到别的设备。</summary>
+    private static void PortableSettingsNoRank()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new PortableSettings
+        {
+            Hotkey = "Ctrl+Q",
+            AutoDeploy = true,
+            UpdatedAt = 1
+        });
+
+        Assert(!json.Contains("defaultRank", StringComparison.OrdinalIgnoreCase),
+            "可同步设置里还带着候选位：" + json);
+        Assert(json.Contains("hotkey", StringComparison.OrdinalIgnoreCase), "快捷键丢了：" + json);
     }
 
     private static void ReAddAfterDelete()
@@ -390,6 +427,43 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
             Abbr = "zrr", Rank = 1, Enabled = true, Ts = 100, Dev = "devA"
         });
         Assert(store.List().Single().Rank == 3, "旧 rev 覆盖了新数据");
+    }
+
+    /// <summary>
+    /// 两台机器各自加了同一个词，同步时会出现两条不同 id 的同名词。
+    /// 合并规则要确定：留更新时间新的那条，另一位埋掉，且不能撞唯一索引。
+    /// </summary>
+    private static void MergeSameWord()
+    {
+        var db = TempDb();
+        using var store = new PhraseStore(db);
+
+        // 旧的那条
+        store.ApplyChange(new ChangeRecord
+        {
+            Id = "devA", Rev = 1, Op = "upsert", Text = "换电脑", Code = "huandiannao",
+            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 100, Dev = "A", Source = "selection"
+        });
+
+        // 另一台设备后加的同一个词，编码不同
+        store.ApplyChange(new ChangeRecord
+        {
+            Id = "devB", Rev = 1, Op = "upsert", Text = "换电脑", Code = "huandiannao",
+            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 200, Dev = "B", Source = "clipboard"
+        });
+
+        var live = store.List();
+        Assert(live.Count == 1, $"同名词合并后应当只剩 1 条，实际 {live.Count}");
+        Assert(live[0].Id == "devB", "没有保留更新时间较新的那条");
+
+        // 迟到的旧变更不能再顶回来
+        store.ApplyChange(new ChangeRecord
+        {
+            Id = "devA", Rev = 2, Op = "upsert", Text = "换电脑", Code = "huandiannao",
+            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 150, Dev = "A", Source = "selection"
+        });
+        Assert(store.List().Count == 1, "旧变更把同名词又加回来了");
+        Assert(store.List()[0].Id == "devB", "旧变更把新的那条挤掉了");
     }
 
     // ---------- 工具 ----------
