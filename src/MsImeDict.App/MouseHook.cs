@@ -15,6 +15,9 @@ public sealed class MouseHook : NativeWindow
     private const int WM_MOUSEMOVE = 0x0200;
     private const int WM_LBUTTONDOWN = 0x0201;
     private const int WM_LBUTTONUP = 0x0202;
+    private const int WM_RBUTTONDOWN = 0x0204;
+    private const int WM_MBUTTONDOWN = 0x0207;
+    private const int WM_MOUSEWHEEL = 0x020A;
     private const int DragThreshold = 6;
 
     private delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -49,6 +52,12 @@ public sealed class MouseHook : NativeWindow
     /// <summary>拖选结束，参数为松开位置（屏幕坐标）。在后台线程回调。</summary>
     public event Action<Point>? DragSelected;
 
+    /// <summary>在任意位置按下鼠标（左右中键），参数为屏幕坐标。在后台线程回调。</summary>
+    public event Action<Point>? MousePressed;
+
+    /// <summary>滚轮滚动。在后台线程回调。</summary>
+    public event Action? WheelTurned;
+
     public MouseHook()
     {
         _proc = Callback;
@@ -82,6 +91,17 @@ public sealed class MouseHook : NativeWindow
             case WM_LBUTTONDOWN:
                 _downPoint = data.pt;
                 _dragging = false;
+                RaisePressed(pt);
+                break;
+
+            case WM_RBUTTONDOWN:
+            case WM_MBUTTONDOWN:
+                RaisePressed(pt);
+                break;
+
+            case WM_MOUSEWHEEL:
+                // 回调里必须立刻返回：这里只投递任务，不做任何界面操作。
+                Task.Run(() => WheelTurned?.Invoke());
                 break;
 
             case WM_MOUSEMOVE:
@@ -106,5 +126,11 @@ public sealed class MouseHook : NativeWindow
         }
 
         return CallNextHookEx(_hook, nCode, wParam, lParam);
+    }
+
+    private void RaisePressed(Point pt)
+    {
+        // 钩子回调不能阻塞：只投递，界面判断交给订阅方在 UI 线程做
+        Task.Run(() => MousePressed?.Invoke(pt));
     }
 }

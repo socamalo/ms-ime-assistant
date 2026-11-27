@@ -99,6 +99,15 @@ public sealed class TrayHost
         // 划词浮条：只读选区，不干预任何应用
         _bar.AddRequested += text => AddPhrase(text, openDialog: false, source: "selection");
         _mouse.DragSelected += OnDragSelected;
+
+        // 浮条是浮在最上层的窗口，必须能一键收走：
+        // 在别处按下鼠标、或滚动页面，都把旧浮条撤掉。
+        _mouse.MousePressed += pt => Post(() =>
+        {
+            if (!_bar.ContainsPoint(pt)) _bar.Dismiss("clicked elsewhere");
+        });
+        _mouse.WheelTurned += () => Post(() => _bar.Dismiss("wheel"));
+
         Log.Write($"mouse hook started={_mouse.Start()}");
     }
 

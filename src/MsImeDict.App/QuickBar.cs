@@ -1,16 +1,34 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace MsImeDict.App;
 
 /// <summary>
 /// 选区旁的浮条。不抢焦点（WS_EX_NOACTIVATE），点按钮不会打断用户正在操作的窗口。
+///
+/// 生命周期自己管，四条退出条件（任一条先到就收起）：
+/// 1. 鼠标离开浮条 1.2 秒
+/// 2. 从显示算起满 5 秒——鼠标一直压在浮条上也一样，它盖在网页上是挡路的
+/// 3. 在别处按下鼠标、或滚动页面（由 <see cref="MouseHook"/> 通知）
+/// 4. 前台窗口换了（Alt+Tab、点到别的窗口）
 /// </summary>
 public sealed class QuickBar : Form
 {
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_TOPMOST = 0x00000008;
+
+    /// <summary>鼠标离开浮条后停留多久。</summary>
+    private const int LingerMs = 1200;
+
+    /// <summary>从显示算起的硬上限，鼠标停在上面也不会超过这个时间。</summary>
+    private const int MaxVisibleMs = 5000;
+
+    private const int TickMs = 200;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 
     private readonly Label _preview;
     private readonly Button _add;
@@ -20,6 +38,8 @@ public sealed class QuickBar : Form
 
     private string _text = "";
     private DateTime _shownAt;
+    private DateTime? _leftAt;
+    private IntPtr _owner;
 
     public QuickBar()
     {
@@ -55,7 +75,7 @@ public sealed class QuickBar : Form
         _add.Click += (_, _) =>
         {
             var t = _text;
-            Hide();
+            Dismiss();
             AddRequested?.Invoke(t);
         };
 
@@ -72,15 +92,10 @@ public sealed class QuickBar : Form
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
-        // 浮条自己管生命周期：鼠标不悬停就 4 秒后自动消失。
-        // 不靠全局鼠标钩子来关它——钩子回调必须极快，不能做界面判断。
-        _lifeTimer = new System.Windows.Forms.Timer { Interval = 250 };
-        _lifeTimer.Tick += (_, _) =>
-        {
-            if (!Visible) { _lifeTimer.Stop(); return; }
-            if (Bounds.Contains(Cursor.Position)) { _shownAt = DateTime.UtcNow; return; }
-            if ((DateTime.UtcNow - _shownAt).TotalSeconds > 4) { Hide(); _lifeTimer.Stop(); }
-        };
+        // 浮条自己管生命周期：不靠全局鼠标钩子做界面判断，
+        // 钩子回调必须极快，只负责通知「别处被点了」。
+        _lifeTimer = new System.Windows.Forms.Timer { Interval = TickMs };
+        _lifeTimer.Tick += (_, _) => Tick();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -93,6 +108,25 @@ public sealed class QuickBar : Form
             cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
             return cp;
         }
+    }
+
+    private void Tick()
+    {
+        if (!Visible) { _lifeTimer.Stop(); return; }
+
+        var now = DateTime.UtcNow;
+
+        // 硬上限：鼠标一直停在浮条上也到点收走，避免盖住网页内容
+        if ((now - _shownAt).TotalMilliseconds >= MaxVisibleMs) { Dismiss("timeout"); return; }
+
+        // 前台窗口换了就收：用户已经去看别的窗口了
+        var fg = GetForegroundWindow();
+        if (fg != IntPtr.Zero && _owner != IntPtr.Zero && fg != _owner) { Dismiss("foreground changed"); return; }
+
+        if (Bounds.Contains(Cursor.Position)) { _leftAt = null; return; }
+
+        _leftAt ??= now;
+        if ((now - _leftAt.Value).TotalMilliseconds >= LingerMs) Dismiss("mouse left");
     }
 
     public void ShowAt(string text, Point anchor)
@@ -108,21 +142,36 @@ public sealed class QuickBar : Form
         if (y + Height > screen.Bottom) y = Math.Max(screen.Top, anchor.Y - Height - 12);
         Location = new Point(x, y);
 
+        _owner = GetForegroundWindow();
         _shownAt = DateTime.UtcNow;
-        if (!Visible) Show();
+        _leftAt = null;
+
+        if (!Visible)
+        {
+            Show();
+            Log.Write($"quickbar shown at {x},{y}（5 秒内必收）");
+        }
         else Location = new Point(x, y);
         _lifeTimer.Start();
+    }
+
+    /// <summary>这个屏幕坐标是否落在浮条上。别处点击时用来判断该不该收。</summary>
+    public bool ContainsPoint(Point screenPoint) => Visible && Bounds.Contains(screenPoint);
+
+    /// <summary>收起浮条。鼠标在别处按下、滚动页面、切窗口都走这里。</summary>
+    public void Dismiss(string reason = "explicit")
+    {
+        _lifeTimer.Stop();
+        _leftAt = null;
+        _owner = IntPtr.Zero;
+        if (!Visible) return;
+        Log.Write($"quickbar dismissed ({reason})");
+        Hide();
     }
 
     private static string Shorten(string s)
     {
         s = s.Replace("\r", " ").Replace("\n", " ").Trim();
         return s.Length <= 20 ? s : s[..20] + "…";
-    }
-
-    public void HideBar()
-    {
-        _lifeTimer.Stop();
-        if (Visible) Hide();
     }
 }

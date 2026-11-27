@@ -13,7 +13,7 @@
       修订号 向下兼容的修复（bug fix、文案、性能）
   -->
   <PropertyGroup>
-    <Version>0.2.2</Version>
+    <Version>0.2.3</Version>
     <Product>微软输入法助手</Product>
     <Company>ms-ime-assistant</Company>
     <Copyright>Copyright (c) 2026 Daniel Ding</Copyright>
