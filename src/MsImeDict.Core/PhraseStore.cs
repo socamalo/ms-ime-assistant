@@ -12,7 +12,7 @@ public sealed class Phrase
     public string Text { get; set; } = "";
     public string Code { get; set; } = "";
 
-    /// <summary>首字母简拼，如「智睿瑞」→ zrr。空表示这个词不配简拼（单字词、u/v 开头等）。</summary>
+    /// <summary>首字母简拼，如「天安门」→ tam。空表示这个词不配简拼（单字词、u/v 开头等）。</summary>
     public string Abbr { get; set; } = "";
 
     public int Rank { get; set; } = 1;
@@ -539,7 +539,7 @@ ON CONFLICT(id) DO UPDATE SET
     ///
     /// 母库里一个词一条（全拼编码 + 简拼编码），投到输入法时展开成两条记录：
     /// 打全拼命中的一条、打首字母命中的一条。
-    /// 输入法只认字面完全相同的编码，不会自己把 zhiruirui 映射到 zrr，所以两条都得写。
+    /// 输入法只认字面完全相同的编码，不会自己把 tiananmen 映射到 tam，所以两条都得写。
     /// </summary>
     public List<PhraseEntry> Project(int maxEntries = 2000)
     {

@@ -56,6 +56,13 @@ if (-not $SkipTests) {
   if ($LASTEXITCODE -ne 0) { throw "自检未通过，不发布" }
 }
 
+# ---------- 3.5 隐私扫描 ----------
+
+Write-Host ""
+Write-Host "=== 隐私扫描 ==="
+& node (Join-Path $root 'tools\privacy-scan.js')
+if ($LASTEXITCODE -ne 0) { throw "公开材料里有用户个人信息或真实词条，不发布" }
+
 # ---------- 4. 打包 ----------
 
 $stage = Join-Path $root 'dist\release\msimdict-app-win-x64'

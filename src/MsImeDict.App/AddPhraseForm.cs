@@ -28,7 +28,7 @@ public sealed class AddPhraseForm : Form
 
         var wordLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "词条" };
         var codeLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "编码（全拼，打这几个字母就能打出该词）" };
-        var abbrLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "简拼编码（首字母，如 zrr；留空表示不写）" };
+        var abbrLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "简拼编码（首字母，如 tam；留空表示不写）" };
         var rankLabel = new Label { Dock = DockStyle.Top, Height = 22, Text = "候选位置" };
 
         for (var i = 1; i <= 9; i++) _rankBox.Items.Add(i);

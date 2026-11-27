@@ -6,8 +6,8 @@ namespace MsImeDict.Core;
 /// 把词条文本转成微软拼音自定义短语可用的编码。
 ///
 /// 微软拼音是按「你打的字」字面匹配自定义短语的，所以同一词条写两条最划算：
-///   - 全拼（如 shankuangmoyao）：你打全拼音时命中
-///   - 简拼（如 skmy）：你打首字母时命中
+///   - 全拼（如 hanzishuru）：你打全拼音时命中
+///   - 简拼（如 hzsr）：你打首字母时命中
 /// </summary>
 public sealed class PinyinEncoder
 {
@@ -29,8 +29,8 @@ public sealed class PinyinEncoder
 
     public sealed class Encoded
     {
-        public string Full { get; init; } = "";      // 全拼，如 shankuangmoyao
-        public string Abbr { get; init; } = "";      // 简拼，如 skmy
+        public string Full { get; init; } = "";      // 全拼，如 hanzishuru
+        public string Abbr { get; init; } = "";      // 简拼，如 hzsr
         public IReadOnlyList<string> CandidateCodes { get; init; } = Array.Empty<string>();
         public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
     }
@@ -136,9 +136,9 @@ public sealed class PinyinEncoder
     }
 
     /// <summary>
-    /// 取词条的首字母简拼（每字一个字母），如「智睿瑞」→ zrr。
+    /// 取词条的首字母简拼（每字一个字母），如「天安门」→ tam。
     ///
-    /// 输入法不会自己把全拼条目映射到首字母，实测打 zrr 只有系统词，
+    /// 输入法不会自己把全拼条目映射到首字母，实测打 tam 只有系统词，
     /// 自定义词必须单独挂一条简拼码。返回空串表示这个词不配简拼：
     ///   - 单字词只有一个字母，会把整个字母的候选表顶掉
     ///   - u / v 开头会撞输入法模式键

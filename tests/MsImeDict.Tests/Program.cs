@@ -81,7 +81,7 @@ public static class Program
     {
         var entries = new List<PhraseEntry>
         {
-            new("skmy", "闪狂魔药", 2),
+            new("hzsr", "汉字输入", 2),
             new("dabingnang", "龘靐齉", 1),
             new("woceshi", "我测试", 1)
         };
@@ -119,11 +119,11 @@ public static class Program
         // 扫描式解析会提前一个字节截断。这里验证按长度字段定位是正确的。
         var entries = new List<PhraseEntry>
         {
-            new("skmy", "闪狂魔药", 2),
+            new("hzsr", "汉字输入", 2),
             new("wo", "我", 1)
         };
         var back = Mschxudp.Parse(Mschxudp.Serialize(entries));
-        Assert(back.Any(e => e.Code == "skmy" && e.Word == "闪狂魔药"), "词面被截断");
+        Assert(back.Any(e => e.Code == "hzsr" && e.Word == "汉字输入"), "词面被截断");
         Assert(back.Any(e => e.Code == "wo" && e.Word == "我"), "编码被截断");
     }
 
@@ -167,10 +167,10 @@ public static class Program
     {
         var enc = new PinyinEncoder();
 
-        var a = enc.Encode("闪狂魔药");
-        Assert(a.Full == "shankuangmoyao", $"全拼错误：{a.Full}");
+        var a = enc.Encode("汉字输入");
+        Assert(a.Full == "hanzishuru", $"全拼错误：{a.Full}");
         Assert(a.CandidateCodes.Count == 1, $"应当只产出 1 条编码，实际 {a.CandidateCodes.Count}");
-        Assert(a.CandidateCodes[0] == "shankuangmoyao", $"编码不是全拼：{a.CandidateCodes[0]}");
+        Assert(a.CandidateCodes[0] == "hanzishuru", $"编码不是全拼：{a.CandidateCodes[0]}");
 
         var b = enc.Encode("我测试");
         Assert(b.Full == "woceshi", $"全拼错误：{b.Full}");
@@ -182,9 +182,9 @@ public static class Program
 
     private static void AbbreviationRules()
     {
-        Assert(PinyinEncoder.AbbreviationOf("智睿瑞") == "zrr", "三字词简拼错误");
-        Assert(PinyinEncoder.AbbreviationOf("飞智") == "fz", "两字词简拼错误");
-        Assert(PinyinEncoder.AbbreviationOf("闪狂魔药") == "skmy", "四字词简拼错误");
+        Assert(PinyinEncoder.AbbreviationOf("天安门") == "tam", "三字词简拼错误");
+        Assert(PinyinEncoder.AbbreviationOf("北京") == "bj", "两字词简拼错误");
+        Assert(PinyinEncoder.AbbreviationOf("汉字输入") == "hzsr", "四字词简拼错误");
         Assert(PinyinEncoder.AbbreviationOf("龘靐齉") == "dbn", "生僻字简拼错误");
 
         // 单字词的简拼只有一个字母，会把整个字母的候选表顶掉，不给
@@ -204,14 +204,14 @@ public static class Program
         var db = TempDb();
         using var store = new PhraseStore(db);
 
-        var first = store.Add("智睿瑞", "zhiruirui", 1, "cli");
-        var second = store.Add("智睿瑞", "zrr", 1, "cli");
-        var third = store.Add(" 智睿瑞 ", "zrrr", 1, "cli");   // 前后空格归一化后是同一个词
+        var first = store.Add("天安门", "tiananmen", 1, "cli");
+        var second = store.Add("天安门", "tam", 1, "cli");
+        var third = store.Add(" 天安门 ", "tamr", 1, "cli");   // 前后空格归一化后是同一个词
 
         Assert(store.List().Count == 1, $"同一个词入库了 {store.List().Count} 条");
         Assert(second.Id == first.Id, "重复添加返回了不同的 id");
         Assert(third.Id == first.Id, "归一化后仍被当成新词");
-        Assert(first.Abbr == "zrr", $"简拼未生成：'{first.Abbr}'");
+        Assert(first.Abbr == "tam", $"简拼未生成：'{first.Abbr}'");
     }
 
     /// <summary>划词加的词标成 selection，热键加的标成 clipboard，别混。</summary>
@@ -220,12 +220,12 @@ public static class Program
         var db = TempDb();
         using var store = new PhraseStore(db);
 
-        store.Add("换电脑", "huandiannao", 1, "selection");
-        store.Add("耗命", "haoming", 1, "clipboard");
+        store.Add("示例词", "shilici", 1, "selection");
+        store.Add("输入法", "shurufa", 1, "clipboard");
 
         var list = store.List();
-        Assert(list.Single(p => p.Text == "换电脑").Source == "selection", "划词来源被写成了别的");
-        Assert(list.Single(p => p.Text == "耗命").Source == "clipboard", "热键来源被写成了别的");
+        Assert(list.Single(p => p.Text == "示例词").Source == "selection", "划词来源被写成了别的");
+        Assert(list.Single(p => p.Text == "输入法").Source == "clipboard", "热键来源被写成了别的");
 
         // 候选位恒为 1，投影到输入法也是 1
         var entries = store.Project();
@@ -253,12 +253,12 @@ public static class Program
         var db = TempDb();
         using var store = new PhraseStore(db);
 
-        var first = store.Add("耗命", "haoming", 1, "cli");
+        var first = store.Add("输入法", "shurufa", 1, "cli");
         Assert(store.Remove(first.Id), "删除失败");
         Assert(store.List().Count == 0, "删除后仍在列表里");
 
         // 墓碑不应挡住同名词重新加入
-        var again = store.Add("耗命", "haoming", 1, "cli");
+        var again = store.Add("输入法", "shurufa", 1, "cli");
         Assert(again.Id != first.Id, "重新添加应当是一条新记录");
         Assert(store.List().Count == 1, $"重新添加后有 {store.List().Count} 条");
     }
@@ -267,16 +267,16 @@ public static class Program
     {
         var db = TempDb();
         using var store = new PhraseStore(db);
-        store.Add("智睿瑞", "zhiruirui", 1, "cli");
+        store.Add("天安门", "tiananmen", 1, "cli");
 
         var entries = store.Project();
         Assert(entries.Count == 2, $"应当展开成 2 条，实际 {entries.Count}");
 
-        var full = entries.Single(e => e.Code == "zhiruirui");
-        Assert(full.Word == "智睿瑞" && full.Order == 1 && !full.IsAbbr, "全拼条目不对");
+        var full = entries.Single(e => e.Code == "tiananmen");
+        Assert(full.Word == "天安门" && full.Order == 1 && !full.IsAbbr, "全拼条目不对");
 
-        var abbr = entries.Single(e => e.Code == "zrr");
-        Assert(abbr.Word == "智睿瑞" && abbr.Order == 1 && abbr.IsAbbr, "简拼条目不对");
+        var abbr = entries.Single(e => e.Code == "tam");
+        Assert(abbr.Word == "天安门" && abbr.Order == 1 && abbr.IsAbbr, "简拼条目不对");
 
         // 单字词不展开简拼
         store.Add("我", "wo", 1, "cli");
@@ -316,8 +316,8 @@ public static class Program
         {
             var db = TempDb();
             using var store = new PhraseStore(db);
-            store.Add("智睿瑞", "zhiruirui", 1, "cli");
-            store.Add("飞智", "feizhi", 1, "cli");
+            store.Add("天安门", "tiananmen", 1, "cli");
+            store.Add("北京", "beijing", 1, "cli");
 
             var deployer = new ImeDeployer { LexPath = temp };
             var result = deployer.Deploy(store.Project());
@@ -328,7 +328,7 @@ public static class Program
 
             // 每条编码都唯一，同一个词不重复出现
             Assert(after.Select(e => e.Code).Distinct().Count() == after.Count, "存在重复编码");
-            foreach (var word in new[] { "智睿瑞", "飞智" })
+            foreach (var word in new[] { "天安门", "北京" })
                 Assert(after.Count(e => e.Word == word) == 2, $"「{word}」的编码条数不对");
         }
         finally { Delete(temp); }
@@ -354,11 +354,11 @@ CREATE TABLE phrases (
   updated_at INTEGER NOT NULL, rev INTEGER NOT NULL DEFAULT 1,
   deleted INTEGER NOT NULL DEFAULT 0
 );
-INSERT INTO phrases VALUES('a1','智睿瑞','zhiruirui',2,1,'clipboard',100,100,1,0);
-INSERT INTO phrases VALUES('a2','智睿瑞','zrr',2,1,'clipboard',101,101,1,0);
-INSERT INTO phrases VALUES('a3','飞智','fz',2,1,'clipboard',102,102,1,0);
-INSERT INTO phrases VALUES('a4','飞智','feizhi',2,1,'clipboard',103,103,1,0);
-INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104,104,2,1);
+INSERT INTO phrases VALUES('a1','天安门','tiananmen',2,1,'clipboard',100,100,1,0);
+INSERT INTO phrases VALUES('a2','天安门','tam',2,1,'clipboard',101,101,1,0);
+INSERT INTO phrases VALUES('a3','北京','bj',2,1,'clipboard',102,102,1,0);
+INSERT INTO phrases VALUES('a4','北京','beijing',2,1,'clipboard',103,103,1,0);
+INSERT INTO phrases VALUES('a5','汉字输入','hanzishuru',2,1,'manual',104,104,2,1);
 ";
             cmd.ExecuteNonQuery();
         }
@@ -367,11 +367,11 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
         {
             var list = store.List();
             Assert(list.Count == 2, $"升级后应当剩 2 个词，实际 {list.Count}");
-            Assert(list.All(p => p.Code == "zhiruirui" || p.Code == "feizhi"),
+            Assert(list.All(p => p.Code == "tiananmen" || p.Code == "beijing"),
                 "没有保留全拼编码：" + string.Join(",", list.Select(p => p.Code)));
             Assert(list.All(p => p.Abbr.Length > 0), "简拼没有回填");
-            Assert(list.Single(p => p.Text == "智睿瑞").Abbr == "zrr", "智睿瑞的简拼不对");
-            Assert(list.Single(p => p.Text == "飞智").Abbr == "fz", "飞智的简拼不对");
+            Assert(list.Single(p => p.Text == "天安门").Abbr == "tam", "天安门的简拼不对");
+            Assert(list.Single(p => p.Text == "北京").Abbr == "bj", "北京的简拼不对");
         }
     }
 
@@ -388,9 +388,9 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
 
         using (var store = new PhraseStore(db))
         {
-            store.Add("智睿瑞", "zhiruirui", 1, "cli");
-            store.Add("飞智", "feizhi", 1, "cli");
-            store.Add("耗命", "haoming", 1, "cli");
+            store.Add("天安门", "tiananmen", 1, "cli");
+            store.Add("北京", "beijing", 1, "cli");
+            store.Add("输入法", "shurufa", 1, "cli");
         }
 
         var first = Snapshot();
@@ -410,21 +410,21 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
 
         store.ApplyChange(new ChangeRecord
         {
-            Id = "x1", Rev = 1, Op = "upsert", Text = "智睿瑞", Code = "zhiruirui",
-            Abbr = "zrr", Rank = 1, Enabled = true, Ts = 100, Dev = "devA"
+            Id = "x1", Rev = 1, Op = "upsert", Text = "天安门", Code = "tiananmen",
+            Abbr = "tam", Rank = 1, Enabled = true, Ts = 100, Dev = "devA"
         });
         store.ApplyChange(new ChangeRecord
         {
-            Id = "x1", Rev = 2, Op = "upsert", Text = "智睿瑞", Code = "zhiruirui",
-            Abbr = "zrr", Rank = 3, Enabled = true, Ts = 200, Dev = "devB"
+            Id = "x1", Rev = 2, Op = "upsert", Text = "天安门", Code = "tiananmen",
+            Abbr = "tam", Rank = 3, Enabled = true, Ts = 200, Dev = "devB"
         });
         Assert(store.List().Single().Rank == 3, "新 rev 没有覆盖旧 rev");
 
         // 旧 rev 迟到，不能把新数据顶回去
         store.ApplyChange(new ChangeRecord
         {
-            Id = "x1", Rev = 1, Op = "upsert", Text = "智睿瑞", Code = "zhiruirui",
-            Abbr = "zrr", Rank = 1, Enabled = true, Ts = 100, Dev = "devA"
+            Id = "x1", Rev = 1, Op = "upsert", Text = "天安门", Code = "tiananmen",
+            Abbr = "tam", Rank = 1, Enabled = true, Ts = 100, Dev = "devA"
         });
         Assert(store.List().Single().Rank == 3, "旧 rev 覆盖了新数据");
     }
@@ -441,15 +441,15 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
         // 旧的那条
         store.ApplyChange(new ChangeRecord
         {
-            Id = "devA", Rev = 1, Op = "upsert", Text = "换电脑", Code = "huandiannao",
-            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 100, Dev = "A", Source = "selection"
+            Id = "devA", Rev = 1, Op = "upsert", Text = "示例词", Code = "shilici",
+            Abbr = "slc", Rank = 1, Enabled = true, Ts = 100, Dev = "A", Source = "selection"
         });
 
         // 另一台设备后加的同一个词，编码不同
         store.ApplyChange(new ChangeRecord
         {
-            Id = "devB", Rev = 1, Op = "upsert", Text = "换电脑", Code = "huandiannao",
-            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 200, Dev = "B", Source = "clipboard"
+            Id = "devB", Rev = 1, Op = "upsert", Text = "示例词", Code = "shilici",
+            Abbr = "slc", Rank = 1, Enabled = true, Ts = 200, Dev = "B", Source = "clipboard"
         });
 
         var live = store.List();
@@ -459,8 +459,8 @@ INSERT INTO phrases VALUES('a5','闪狂魔药','shankuangmoyao',2,1,'manual',104
         // 迟到的旧变更不能再顶回来
         store.ApplyChange(new ChangeRecord
         {
-            Id = "devA", Rev = 2, Op = "upsert", Text = "换电脑", Code = "huandiannao",
-            Abbr = "hdn", Rank = 1, Enabled = true, Ts = 150, Dev = "A", Source = "selection"
+            Id = "devA", Rev = 2, Op = "upsert", Text = "示例词", Code = "shilici",
+            Abbr = "slc", Rank = 1, Enabled = true, Ts = 150, Dev = "A", Source = "selection"
         });
         Assert(store.List().Count == 1, "旧变更把同名词又加回来了");
         Assert(store.List()[0].Id == "devB", "旧变更把新的那条挤掉了");

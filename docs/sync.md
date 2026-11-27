@@ -12,7 +12,7 @@ socamalo/ms-ime-dict        公开  代码、文档、工具
 私有仓库里每个变更一个文件：
 
 ```json
-{"id":"a1b2c3d4e5f6a7b8","rev":1,"op":"upsert","text":"闪狂魔药","code":"skmy","rank":2,"enabled":true,"source":"selection","ts":1764157200,"dev":"3f9a1c2b7d4e"}
+{"id":"a1b2c3d4e5f6a7b8","rev":1,"op":"upsert","text":"汉字输入","code":"hzsr","rank":2,"enabled":true,"source":"selection","ts":1764157200,"dev":"3f9a1c2b7d4e"}
 ```
 
 - `id` 16 位随机串，跨设备稳定
