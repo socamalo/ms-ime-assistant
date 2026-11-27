@@ -151,10 +151,26 @@ public static class Program
 
         using var store = new PhraseStore();
 
-        // 加词前先查一遍：同一个词不重复入库
+        // 加词前先查一遍：同一个词不重复入库；显式给了 --rank 时顺手修正候选位
         var existing = store.FindByText(text);
         if (existing is not null)
         {
+            if (opts.TryGetValue("--rank", out var wanted) && int.TryParse(wanted, out var newRank)
+                && newRank != existing.Rank)
+            {
+                existing.Rank = Math.Clamp(newRank, Mschxudp.MinOrder, Mschxudp.MaxOrder);
+                existing.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                existing.Rev++;
+                store.ApplyChange(new ChangeRecord
+                {
+                    Id = existing.Id, Rev = existing.Rev, Op = "upsert", Text = existing.Text,
+                    Code = existing.Code, Rank = existing.Rank, Enabled = existing.Enabled,
+                    Source = existing.Source, Ts = existing.UpdatedAt, Dev = DeviceId.Value
+                });
+                Console.WriteLine($"「{text}」已在词典中，候选位改为 {existing.Rank}");
+                return DoDeploy(store);
+            }
+
             var existingCodes = string.Join("、", store.List()
                 .Where(p => PhraseStore.NormalizeText(p.Text) == PhraseStore.NormalizeText(text))
                 .Select(p => p.Code));

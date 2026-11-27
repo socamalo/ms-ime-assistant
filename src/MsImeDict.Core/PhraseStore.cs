@@ -63,8 +63,9 @@ public sealed class PhraseStore : IDisposable
 CREATE TABLE IF NOT EXISTS phrases (
   id          TEXT PRIMARY KEY,
   text        TEXT NOT NULL,
+  text_key    TEXT,
   code        TEXT NOT NULL,
-  rank        INTEGER NOT NULL DEFAULT 2,
+  rank        INTEGER NOT NULL DEFAULT 1,
   enabled     INTEGER NOT NULL DEFAULT 1,
   source      TEXT NOT NULL DEFAULT 'manual',
   created_at  INTEGER NOT NULL,
@@ -73,9 +74,108 @@ CREATE TABLE IF NOT EXISTS phrases (
   deleted     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_phrases_code ON phrases(code);
-CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
 ";
         cmd.ExecuteNonQuery();
+
+        MigrateTextKey();
+    }
+
+    /// <summary>
+    /// 引入「词条唯一」约束。
+    ///
+    /// 词库是字典：一个词只有一条。原来用 (词条, 编码) 判重，
+    /// 同一个词换个编码还能再进一条，导出到输入法就是两条候选。
+    /// 这里补 text_key 列（归一化后的词条），回填历史数据、清掉重复，
+    /// 再建唯一索引兜底。
+    /// </summary>
+    private void MigrateTextKey()
+    {
+        var hasColumn = false;
+        using (var check = _conn.CreateCommand())
+        {
+            check.CommandText = "PRAGMA table_info(phrases)";
+            using var r = check.ExecuteReader();
+            while (r.Read())
+                if (string.Equals(r.GetString(1), "text_key", StringComparison.OrdinalIgnoreCase))
+                    hasColumn = true;
+        }
+
+        if (!hasColumn)
+        {
+            using var alter = _conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE phrases ADD COLUMN text_key TEXT";
+            alter.ExecuteNonQuery();
+        }
+
+        // 只对「活着」的行做收敛。墓碑（deleted=1）不参与判断，
+        // 否则墓碑里的旧编码更长，会把正常条目挤掉（踩过这个坑）。
+        var rows = new List<(string Id, string Text, string Code, long CreatedAt)>();
+        using (var read = _conn.CreateCommand())
+        {
+            read.CommandText = "SELECT id, text, code, created_at FROM phrases WHERE deleted=0";
+            using var r = read.ExecuteReader();
+            while (r.Read())
+                rows.Add((r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3)));
+        }
+
+        var keep = new Dictionary<string, (string Id, string Text, string Code, long CreatedAt)>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            var key = NormalizeText(row.Text);
+            if (key.Length == 0) continue;
+
+            if (!keep.TryGetValue(key, out var current))
+            {
+                keep[key] = row;
+                continue;
+            }
+
+            var better = row.Code.Length > current.Code.Length
+                         || (row.Code.Length == current.Code.Length && row.CreatedAt < current.CreatedAt);
+            if (better) keep[key] = row;
+        }
+
+        var keepIds = keep.Values.Select(v => v.Id).ToHashSet(StringComparer.Ordinal);
+        var toDelete = rows.Where(r => !keepIds.Contains(r.Id)).Select(r => r.Id).ToList();
+
+        using var tx = _conn.BeginTransaction();
+
+        foreach (var kv in keep)
+        {
+            using var update = _conn.CreateCommand();
+            update.Transaction = tx;
+            update.CommandText = "UPDATE phrases SET text_key=$k WHERE id=$id";
+            update.Parameters.AddWithValue("$k", kv.Key);
+            update.Parameters.AddWithValue("$id", kv.Value.Id);
+            update.ExecuteNonQuery();
+        }
+
+        foreach (var id in toDelete)
+        {
+            using var del = _conn.CreateCommand();
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM phrases WHERE id=$id";
+            del.Parameters.AddWithValue("$id", id);
+            del.ExecuteNonQuery();
+        }
+        tx.Commit();
+
+        // 唯一索引只约束「活着」的行：墓碑可以和别的行同 key，
+        // 否则删掉的词会挡住同名新词。
+        try
+        {
+            using var drop = _conn.CreateCommand();
+            drop.CommandText = "DROP INDEX IF EXISTS idx_phrases_text_key";
+            drop.ExecuteNonQuery();
+
+            using var idx = _conn.CreateCommand();
+            idx.CommandText =
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_phrases_text_key_live ON phrases(text_key) WHERE deleted=0";
+            idx.ExecuteNonQuery();
+        }
+        catch { /* 建不了唯一索引时，唯一性仍由 Add 的检查保证 */ }
+
+
     }
 
     // ---------- 读 ----------
@@ -108,10 +208,33 @@ CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
     public Phrase? FindByCode(string code)
         => List().FirstOrDefault(p => string.Equals(p.Code, code, StringComparison.Ordinal));
 
+    /// <summary>按词条查（归一化后比对）。词库里一个词只有一条。</summary>
     public Phrase? FindByText(string text)
+        => FindByKey(NormalizeText(text));
+
+    private Phrase? FindByKey(string key)
     {
-        var key = NormalizeText(text);
-        return List().FirstOrDefault(p => NormalizeText(p.Text) == key);
+        if (key.Length == 0) return null;
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT id,text,code,rank,enabled,source,created_at,updated_at,rev,deleted
+FROM phrases WHERE text_key=$k AND deleted=0 LIMIT 1";
+        cmd.Parameters.AddWithValue("$k", key);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new Phrase
+        {
+            Id = r.GetString(0),
+            Text = r.GetString(1),
+            Code = r.GetString(2),
+            Rank = r.GetInt32(3),
+            Enabled = r.GetInt32(4) != 0,
+            Source = r.GetString(5),
+            CreatedAt = r.GetInt64(6),
+            UpdatedAt = r.GetInt64(7),
+            Rev = r.GetInt32(8),
+            Deleted = r.GetInt32(9) != 0
+        };
     }
 
     /// <summary>按关键词搜索（词条或编码包含即可），用于加词前人工确认。</summary>
@@ -151,9 +274,8 @@ CREATE INDEX IF NOT EXISTS idx_phrases_text ON phrases(text);
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("词条不能为空", nameof(text));
 
-        var duplicate = List().FirstOrDefault(p =>
-            NormalizeText(p.Text) == NormalizeText(text) &&
-            string.Equals(p.Code, code, StringComparison.Ordinal));
+        // 词库是字典：同一个词只允许一条，换个编码也不行
+        var duplicate = FindByKey(NormalizeText(text));
         if (duplicate is not null) return duplicate;
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -317,21 +439,24 @@ ON CONFLICT(id) DO UPDATE SET
     }
 
     /// <summary>
-    /// 清理重复条目：同一 (词条, 编码) 只保留最早的一条。
+    /// 按词条去重：一个词只保留一条，优先保留编码更长的那条（全拼比简拼长）。
     /// 返回删掉的条数。
     /// </summary>
     public int RemoveDuplicates()
     {
-        var groups = List().GroupBy(p => (p.Text, p.Code))
-                           .Where(g => g.Count() > 1)
-                           .ToList();
+        var rows = List();
+        var groups = rows.GroupBy(p => NormalizeText(p.Text))
+                         .Where(g => g.Count() > 1)
+                         .ToList();
+
         var removed = 0;
         foreach (var g in groups)
         {
-            foreach (var extra in g.OrderBy(p => p.CreatedAt).Skip(1))
-            {
+            var keep = g.OrderByDescending(p => p.Code.Length)
+                        .ThenBy(p => p.CreatedAt)
+                        .First();
+            foreach (var extra in g.Where(p => p.Id != keep.Id))
                 if (Remove(extra.Id)) removed++;
-            }
         }
         return removed;
     }

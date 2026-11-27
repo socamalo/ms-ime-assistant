@@ -61,7 +61,6 @@ public sealed class TrayHost
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("从剪贴板加词", null, (_, _) => CaptureClipboard());
         menu.Items.Add("管理词库…", null, (_, _) => OpenManager());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("同步到私有仓库", null, (_, _) => SyncNow());
