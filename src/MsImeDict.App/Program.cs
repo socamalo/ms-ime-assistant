@@ -174,8 +174,11 @@ public sealed class TrayHost
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            Notify("剪贴板里没有文字",
-                "先选中文字按 Ctrl+C 复制，再按一次热键",
+            var reason = SelectionReader.LastClipboardReason;
+            Notify("没有取到文字",
+                string.IsNullOrEmpty(reason)
+                    ? "先选中文字按 Ctrl+C 复制，再按一次热键"
+                    : reason + "。先按 Ctrl+C 复制要加入的词，再按热键",
                 ToolTipIcon.Info);
             return;
         }

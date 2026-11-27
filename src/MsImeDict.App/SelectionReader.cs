@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Automation;
-using System.Windows.Forms;
 
 namespace MsImeDict.App;
 
@@ -72,22 +71,14 @@ public static class SelectionReader
 
     // ---------- 只读剪贴板 ----------
 
+    /// <summary>上一次读剪贴板失败的原因，用于给用户看得懂的提示。</summary>
+    public static string LastClipboardReason { get; private set; } = "";
+
     private static string? ReadClipboardText()
     {
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (!Clipboard.ContainsText()) return null;
-                var text = Clipboard.GetText();
-                return string.IsNullOrWhiteSpace(text) ? null : text;
-            }
-            catch
-            {
-                System.Threading.Thread.Sleep(60);
-            }
-        }
-        return null;
+        var text = ClipboardText.Read(out var reason);
+        LastClipboardReason = reason;
+        return text;
     }
 
     // ---------- UI Automation 读选区 ----------
