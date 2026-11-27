@@ -234,10 +234,19 @@ public static class Program
 
     private static int Remove(string[] rest)
     {
-        if (rest.Length == 0) { Console.Error.WriteLine("用法：remove <id>"); return 1; }
+        if (rest.Length == 0) { Console.Error.WriteLine("用法：remove <id 或 词条>"); return 1; }
+
         using var store = new PhraseStore();
-        if (!store.Remove(rest[0])) { Console.Error.WriteLine($"找不到词条 {rest[0]}"); return 1; }
-        Console.WriteLine($"已删除 {rest[0]}");
+        var key = rest[0];
+
+        // 先按 id 找，找不到再按词条找——list 里不再显示 id，用户手里只有词条
+        var phrase = store.List(true).FirstOrDefault(p => p.Id == key)
+                     ?? store.FindByText(string.Join(' ', rest));
+
+        if (phrase is null) { Console.Error.WriteLine($"找不到词条 {key}"); return 1; }
+        if (!store.Remove(phrase.Id)) { Console.Error.WriteLine($"删除失败 {phrase.Id}"); return 1; }
+
+        Console.WriteLine($"已删除「{phrase.Text}」({phrase.Id})");
         return DoDeploy(store);
     }
 
